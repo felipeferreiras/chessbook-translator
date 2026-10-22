@@ -52,3 +52,13 @@ def test_number_mismatch_is_a_warning():
     p = protect("See Chapter 5 after 1.e4 e5.")
     out = restore("Veja o Capítulo 6 após ⟦1⟧.", p)
     assert any("números" in w for w in out.warnings)
+
+
+def test_prose_parentheses_stay_visible_to_the_translator():
+    from app.chess.notation.lexer import LexStyle
+
+    text = "he replies 2 ♔e4 (but not 2 ♔f6? ♔c4! 3 ♔e6 ♔c5−+) 2...♔c4 3 ♔e3, with a draw."
+    p = protect(text, LexStyle(numbers_without_dot=True))
+    assert p.masked == "he replies ⟦1⟧ (but not ⟦2⟧) ⟦3⟧, with a draw."
+    out = restore("ele responde ⟦1⟧ (mas não ⟦2⟧) ⟦3⟧, com empate.", p)
+    assert out.text == "ele responde 2 ♔e4 (mas não 2 ♔f6? ♔c4! 3 ♔e6 ♔c5−+) 2...♔c4 3 ♔e3, com empate."

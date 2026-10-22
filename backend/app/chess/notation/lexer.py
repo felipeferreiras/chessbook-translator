@@ -41,6 +41,7 @@ class AtomKind(StrEnum):
     SUSPICIOUS = "suspicious"
     DESCRIPTIVE = "descriptive"
     ALT_DEST = "alt_dest"  # "♕b5(c2)": mesma peça, casa de destino alternativa
+    ROUTE = "route"  # rota de peça: "♔e2-d2-c2" (não é um lance)
     PAREN_OPEN = "paren_open"  # parêntese de prosa que contém notação
     PAREN_CLOSE = "paren_close"
 
@@ -196,6 +197,10 @@ _ALT_DEST_RE = re.compile(
     r"(?:(?<=[1-8!?+#⊙△])|(?<=[1-8!?+#⊙△] ))\((?P<sq>[a-h][1-8])\)"
     r"(?P<check>\+(?![−\-])|#)?(?P<ann>!!|\?\?|!\?|\?!|[!?])?(?![\w\-])"
 )
+# Rota de uma peça por três ou mais casas: "♔e2-d2-c2", "...♔f7-e6-d5".
+_ROUTE_RE = re.compile(
+    rf"(?<![\w\-/{_P}])[{_P}]?[a-h][1-8](?:-[a-h][1-8]){{2,}}(?:{_INFO})*(?![\w\-])"
+)
 # Notação descritiva inglesa: P-K4, N-KB3, PxP, Q-R5ch, B-QN5.
 _DESCRIPTIVE_RE = re.compile(
     r"(?<![\w\-])[KQRBNP](?:\((?:[KQ]?[RBN]?)?\d?\))?(?:-(?:[KQ]?[RBN]?[1-8])|x(?:[KQ]?[RBN]?P|[KQRBN]))(?:ch|\+)?(?![\w\-])"
@@ -266,6 +271,9 @@ def _raw_atoms(text: str, style: LexStyle) -> list[Atom]:
                 Atom(AtomKind.MOVE_NUMBER, m.start(), m.end(), m.group(),
                      number=int(m.group(1)), black=m.group(2) != ".")
             )
+    for m in _ROUTE_RE.finditer(text):
+        if claim(m.start(), m.end()):
+            found.append(Atom(AtomKind.ROUTE, m.start(), m.end(), m.group()))
     for m in _ALT_DEST_RE.finditer(text):
         if claim(m.start(), m.end()):
             alt = MoveSyntax(
@@ -417,7 +425,8 @@ def lex(text: str, style: LexStyle = DEFAULT_STYLE) -> LexResult:
         ):
             span.atoms = [
                 a for a in span.atoms
-                if a.kind in (AtomKind.SQUARE_REF, AtomKind.DESCRIPTIVE, AtomKind.PAREN_OPEN, AtomKind.PAREN_CLOSE)
+                if a.kind in (AtomKind.SQUARE_REF, AtomKind.DESCRIPTIVE, AtomKind.ROUTE,
+                              AtomKind.PAREN_OPEN, AtomKind.PAREN_CLOSE)
             ]
             if not span.atoms:
                 continue

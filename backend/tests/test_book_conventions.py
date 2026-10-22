@@ -203,7 +203,7 @@ def test_resolve_linares_spans_and_keep_origin():
     r = resolve_spans(spans)
     assert r.text == "1 ♔d4? ♔e6!⊙ thus 9 ♔d6+−"
     assert r.raw[r.origin[r.text.index("+−")]] == "i"
-    assert r.proposed_only and not r.unmapped
+    assert not r.proposed_only and not r.unmapped  # perfil Linares confirmado pelo usuário
 
 
 def test_unmapped_glyph_is_reported_not_guessed():
@@ -216,3 +216,13 @@ def test_embedded_font_probe_identifies_figurine_drawn_by_letter():
     xref = next(f[0] for f in doc[0].get_fonts(full=True) if "ChessFigurineTest" in f[3])
     obs = {o.char: o for o in probe_embedded_font(doc, xref)}
     assert obs["N"].best == "♘" and obs["N"].score > 0.9
+
+
+def test_piece_route_is_notation_but_not_a_move():
+    text = "White must take measures against ...♔e2-d2-c2−+ in time."
+    kinds = [(a.kind, a.text) for a in lex(text, BOOK).atoms]
+    assert (AtomKind.ROUTE, "♔e2-d2-c2−+") in kinds
+    r = run(text, "8/8/8/8/8/8/4k3/K7 b - - 0 1")
+    assert r.moves == []
+    from app.translation.guard import protect
+    assert "♔" not in protect(text, BOOK).masked

@@ -16,6 +16,9 @@ metadados do pacote publicado. Não constitui parecer jurídico.
 | NumPy | 2.5.4 | BSD-3-Clause e outras permissivas | — |
 | Pillow | 13.0.0 | MIT-CMU | — |
 | WeasyPrint (spike/modo B) | 70.0 | BSD-3-Clause | — |
+| anthropic (SDK Claude) | 2.1.0 | Apache-2.0 | — |
+| openai (SDK OpenAI) | 3.36.1 | Apache-2.0 | — |
+| google-genai (SDK Gemini) | 2.32.0 | Apache-2.0 | — |
 | pytest, ruff (desenvolvimento) | 9.1.1 / atual | MIT | — |
 | Tesseract (binário do sistema, opcional) | 5.3.4 | Apache-2.0 | — |
 | DejaVu Sans (fonte do sistema) | — | Bitstream Vera + domínio público | incorporação permitida |
@@ -27,8 +30,7 @@ Fontes de saída candidatas (pacotes do sistema, licença lida no arquivo
 compatíveis com Times New Roman) e FreeSerif (GNU FreeFont, GPL-3+ com exceção
 para incorporação em documentos; cobre figurinas e ⩲/⩱).
 
-chess.js 1.4.0 (BSD-2-Clause), pdfjs-dist 6.4.299 (Apache-2.0), SDK `anthropic`
-2.1.0 (Apache-2.0), OCRmyPDF 17.13.0 (MPL-2.0), Noto Sans Symbols 2 (OFL-1.1),
+chess.js 1.4.0 (BSD-2-Clause), pdfjs-dist 6.4.299 (Apache-2.0), OCRmyPDF 17.13.0 (MPL-2.0), Noto Sans Symbols 2 (OFL-1.1),
 llama.cpp (MIT; pesos de modelos com licenças próprias), Docling 2.141.0 (MIT;
 licenças dos pesos **não verificadas**).
 

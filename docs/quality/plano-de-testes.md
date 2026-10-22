@@ -11,7 +11,7 @@ uv venv .venv && uv pip install --python .venv/bin/python -e ".[dev,spike]"
 Requisitos do sistema: fonte DejaVu Sans (`fonts-dejavu-core`); Tesseract é
 opcional (o teste de OCR é pulado se não estiver instalado).
 
-## Suíte atual — 114 testes, todos passando em 2026-10-22
+## Suíte atual — 148 testes, todos passando em 2026-10-22
 
 | Arquivo | Cobre |
 |---|---|
@@ -20,12 +20,21 @@ opcional (o teste de OCR é pulado se não estiver instalado).
 | `test_notation_render_convention.py` | preservação byte a byte, FAN→EN/PT, ida e volta EN→PT→FAN→EN, promoção, desambiguação e sinais mantidos, política `strict` × `symbol_only`, letra ambígua nunca convertida, lance ambíguo nunca convertido, detecção de convenção (6 casos) |
 | `test_translation_guard.py` | marcadores, restauração, marcador ausente/duplicado/inventado, casa alterada na prosa, reordenação, números |
 | `test_book_conventions.py` | números sem ponto, capturas abreviadas, símbolos do Informator colados, casa alternativa `(c2)`, parênteses de prosa, negrito como linha principal, ramificação decidida por um segmento posterior, ideias após △, numeração vinda do texto, leitura de diagramas em fonte (ida e volta, roque não inventado, defeito tipográfico, fileira deslocada, diagrama sem reis), rótulos, resolução de glifos com origem, glifo sem mapa, probe da fonte incorporada |
+| `test_translation_providers.py` | prompt e glossário; para Claude, ChatGPT e Gemini: argumentos do pedido e leitura de respostas construídas com as classes reais de cada SDK, recusas, bloqueios, cortes por limite, JSON inválido; configuração (privacidade, chave, modelo obrigatório, `.env`) |
+| `test_translation_service.py` | fluxo completo com notação restaurada byte a byte, segmentos só de notação não enviados, contexto mascarado, marcador perdido → nova tentativa → revisão, casa ou símbolo alterado rejeitado, cache, lotes, disjuntor após falhas, recusa, id ausente, razão de comprimento |
 | `test_pdf_fixtures.py` | extração de FAN Unicode, fonte figurina por letras, fonte de uso privado; proposta de mapa de glifos; letras comuns não confundidas; validação após mapeamento; caracterização do `insert_htmlbox`; caracterização do Tesseract com FAN |
 
 Casos ambíguos cujo resultado correto é **pedir revisão**: SAN subespecificado,
 promoção sem peça, `R` com convenção indeterminada, letra resolvida só por
 legalidade, marcador de xeque sem xeque, números de lance incompatíveis,
 posição presumida.
+
+## Não coberto por testes automáticos
+
+* Chamadas reais a Claude, ChatGPT e Gemini (sem chave nesta sessão). Os
+  testes verificam montagem do pedido e leitura da resposta com os tipos dos
+  SDKs, mas só uma chamada real confirma que cada API aceita o pedido (por
+  exemplo, saída estruturada combinada com `fallbacks` na Claude).
 
 ## Próximas camadas
 

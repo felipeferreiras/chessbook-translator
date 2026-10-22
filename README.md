@@ -28,8 +28,8 @@ Requisitos: Python 3.12+, [uv](https://docs.astral.sh/uv/), fonte DejaVu Sans
 ```bash
 cd backend
 uv venv .venv
-uv pip install --python .venv/bin/python -e ".[dev,spike]"
-.venv/bin/python -m pytest -q        # 114 testes
+uv pip install --python .venv/bin/python -e ".[dev,spike]"   # inclui os SDKs de Claude, OpenAI e Gemini
+.venv/bin/python -m pytest -q        # 148 testes
 .venv/bin/ruff check app tests scripts ../spikes
 ```
 
@@ -39,10 +39,17 @@ Spike de estratégias de PDF (gera PDFs, PNGs e `results.json`):
 .venv/bin/python ../spikes/pdf_strategies/run_spike.py /tmp/spike-out
 ```
 
+## Tradução
+
+Configure `.env` a partir de `.env.example` (provedor, chave, modelo e
+`CHESSBOOK_PRIVACY_MODE=remote_allowed`) e veja `docs/architecture/02-traducao.md`.
+Nenhuma chamada real a provedores foi feita até agora: falta uma chave de API.
+
 ## Documentação
 
 * `docs/research/` — ambiente, repositórios e licenças, spike de PDF, estratégia FAN
 * `docs/architecture/01-arquitetura.md` — módulos, IR, modelo de dados, pipeline, privacidade, riscos
+* `docs/architecture/02-traducao.md` — provedores, o que é enviado, garantias, custo
 * `docs/decisions/` — ADRs 0001–0006
 * `docs/quality/` — critérios de aceitação, plano de testes, definição da POC
 * `docs/plano-execucao.md` — próximas fases por prioridade

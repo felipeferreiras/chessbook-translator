@@ -14,11 +14,13 @@ import re
 from collections import Counter
 from dataclasses import dataclass, field
 
-from app.chess.notation.lexer import AtomKind, lex
+from app.chess.notation.lexer import DEFAULT_STYLE, AtomKind, LexStyle, lex
 
 PLACEHOLDER_RE = re.compile(r"⟦(\d+)⟧")
 SQUARE_RE = re.compile(r"(?<![\w])[a-h][1-8](?![\w])")
 NUMBER_RE = re.compile(r"(?<![\w⟦])\d+(?![\w⟧])")
+# Símbolos de avaliação e anotação fora da notação ("△ ...", "+−" isolado).
+SYMBOL_RE = re.compile(r"\+−|−\+|[⊙△□⇆∞±∓⩲⩱]")
 
 
 class GuardViolation(ValueError):
@@ -34,6 +36,7 @@ class Protected:
     slots: dict[str, str]
     squares: Counter[str]
     numbers: Counter[str]
+    symbols: Counter[str] = field(default_factory=Counter)
 
 
 @dataclass
@@ -42,25 +45,40 @@ class Restored:
     warnings: list[str] = field(default_factory=list)
 
 
-def protect(text: str) -> Protected:
-    lexed = lex(text)
+_NOTATION_KINDS = (AtomKind.MOVE, AtomKind.SUSPICIOUS, AtomKind.DESCRIPTIVE, AtomKind.ROUTE)
+
+
+def _groups(span) -> list[list]:
+    """Divide um trecho nos parênteses de prosa, que devem ficar visíveis ao tradutor."""
+    groups: list[list] = [[]]
+    for atom in span.atoms:
+        if atom.kind in (AtomKind.PAREN_OPEN, AtomKind.PAREN_CLOSE):
+            groups.append([])
+        else:
+            groups[-1].append(atom)
+    return [g for g in groups if g and any(a.kind in _NOTATION_KINDS for a in g)]
+
+
+def protect(text: str, style: LexStyle = DEFAULT_STYLE) -> Protected:
+    lexed = lex(text, style)
     parts: list[str] = []
     slots: dict[str, str] = {}
     cursor = 0
     for span in lexed.spans:
-        if not any(a.kind in (AtomKind.MOVE, AtomKind.SUSPICIOUS, AtomKind.DESCRIPTIVE) for a in span.atoms):
-            continue
-        key = str(len(slots) + 1)
-        slots[key] = text[span.start:span.end]
-        parts.append(text[cursor:span.start])
-        parts.append(f"⟦{key}⟧")
-        cursor = span.end
+        for group in _groups(span):
+            start, end = group[0].start, group[-1].end
+            key = str(len(slots) + 1)
+            slots[key] = text[start:end]
+            parts.append(text[cursor:start])
+            parts.append(f"⟦{key}⟧")
+            cursor = end
     parts.append(text[cursor:])
     masked = "".join(parts)
     prose = PLACEHOLDER_RE.sub(" ", masked)
     return Protected(
         original=text, masked=masked, slots=slots,
         squares=Counter(SQUARE_RE.findall(prose)), numbers=Counter(NUMBER_RE.findall(prose)),
+        symbols=Counter(SYMBOL_RE.findall(prose)),
     )
 
 
@@ -80,6 +98,11 @@ def restore(translated: str, protected: Protected) -> Restored:
     if squares != protected.squares:
         problems.append(
             f"casas na prosa divergem: original={dict(protected.squares)} tradução={dict(squares)}"
+        )
+    symbols = Counter(SYMBOL_RE.findall(prose))
+    if symbols != protected.symbols:
+        problems.append(
+            f"símbolos de avaliação divergem: original={dict(protected.symbols)} tradução={dict(symbols)}"
         )
     if problems:
         raise GuardViolation(problems)

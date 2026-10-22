@@ -35,10 +35,10 @@ do Informator: `i`=+−, `o`=−+, `y`=±, `u`=∓, `r`=⩲, `t`=⩱, `q`=∞, `
 `*`=⊙ (zugzwang), `$`=△ (com a ideia), `~`=□ (lance único), `x`=×. Sem o perfil
 de fonte, uma tradução trataria `i` e `o` como letras.
 
-O mapa está em `backend/app/extraction/font_profiles.py` com estado
-**proposto**. Ele saiu da leitura de cada glifo renderizado isoladamente a
-partir da fonte incorporada e **precisa da confirmação do usuário**. A folha de
-confirmação é gerada a partir do próprio PDF.
+O mapa está em `backend/app/extraction/font_profiles.py`. Ele saiu da leitura
+de cada glifo renderizado isoladamente a partir da fonte incorporada e foi
+**confirmado pelo usuário em 2026-10-22** com a folha de confirmação gerada a
+partir do próprio PDF.
 
 ### Diagramas: tabuleiro composto como texto
 
@@ -106,8 +106,8 @@ Resultado final, após as correções descritas abaixo (2026-10-22):
 | Tempo | cerca de 9 s para o livro inteiro |
 
 Todos os lances validados dependem de **FEN proposta** (lida do diagrama, ainda
-não confirmada) e do perfil de fonte **proposto**. Por isso continuam marcados
-para revisão até essas duas confirmações.
+não confirmada). O perfil de fonte foi confirmado depois desta medição. Os
+lances continuam marcados para revisão até a confirmação das posições.
 
 Taxa de validação por faixa de páginas: 64 %, 65 %, 58 %, 60 %, 54 %, 71 %, 73 %,
 31 % e 24 % (blocos de 50 páginas). A queda no final ocorre na seção de
