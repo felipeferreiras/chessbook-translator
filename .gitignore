@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+storage/
+spike-out/
+.env
+# Nunca versionar livros reais
+samples/
+*.private.pdf

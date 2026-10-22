@@ -1,0 +1,54 @@
+"""Proteção dos lances durante a tradução."""
+
+import pytest
+
+from app.translation.guard import GuardViolation, protect, restore
+
+EN = "1.e4 e5 2.♘f3 ♘c6 3.♗b5 a6 This is the main line. The knight on f3 controls e5."
+
+
+def test_translator_never_sees_moves():
+    p = protect(EN)
+    assert "♘" not in p.masked and "e4" not in p.masked
+    assert p.masked.startswith("⟦1⟧ This is the main line.")
+    assert p.slots["1"] == "1.e4 e5 2.♘f3 ♘c6 3.♗b5 a6"
+
+
+def test_restore_puts_original_notation_back():
+    p = protect(EN)
+    out = restore("⟦1⟧ Esta é a linha principal. O cavalo em f3 controla e5.", p)
+    assert out.text == "1.e4 e5 2.♘f3 ♘c6 3.♗b5 a6 Esta é a linha principal. O cavalo em f3 controla e5."
+    assert out.warnings == []
+
+
+def test_missing_placeholder_is_rejected():
+    p = protect(EN)
+    with pytest.raises(GuardViolation, match="ausente"):
+        restore("Esta é a linha principal. O cavalo em f3 controla e5.", p)
+
+
+def test_duplicated_or_invented_placeholder_is_rejected():
+    p = protect(EN)
+    with pytest.raises(GuardViolation):
+        restore("⟦1⟧ ⟦1⟧ O cavalo em f3 controla e5.", p)
+    with pytest.raises(GuardViolation, match="desconhecido"):
+        restore("⟦1⟧ ⟦2⟧ O cavalo em f3 controla e5.", p)
+
+
+def test_changed_square_in_prose_is_rejected():
+    p = protect(EN)
+    with pytest.raises(GuardViolation, match="casas"):
+        restore("⟦1⟧ Esta é a linha principal. O cavalo em f6 controla e5.", p)
+
+
+def test_reordered_spans_produce_warning():
+    p = protect("After 4.Ba4 Nf6 White plays 5.O-O quickly.")
+    out = restore("As brancas jogam ⟦2⟧ rapidamente após ⟦1⟧.", p)
+    assert "ordem" in out.warnings[0]
+    assert out.text == "As brancas jogam 5.O-O rapidamente após 4.Ba4 Nf6."
+
+
+def test_number_mismatch_is_a_warning():
+    p = protect("See Chapter 5 after 1.e4 e5.")
+    out = restore("Veja o Capítulo 6 após ⟦1⟧.", p)
+    assert any("números" in w for w in out.warnings)

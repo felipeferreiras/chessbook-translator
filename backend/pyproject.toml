@@ -1,0 +1,30 @@
+[project]
+name = "chessbook-translator-backend"
+version = "0.1.0"
+description = "Tradutor privado de livros de xadrez em PDF (backend)."
+requires-python = ">=3.12"
+license = "GPL-3.0-or-later"  # ver ../LICENSES.md (python-chess GPL-3.0+, PyMuPDF AGPL-3.0)
+dependencies = [
+    "chess==1.11.2",
+    "pymupdf==2.0",
+    "fonttools==4.67.0",
+    "numpy==2.5.4",
+    "pillow==13.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest==9.1.1",
+    "ruff",
+]
+spike = [
+    "weasyprint==70.0",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
