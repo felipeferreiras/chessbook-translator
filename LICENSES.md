@@ -22,6 +22,11 @@ metadados do pacote publicado. Não constitui parecer jurídico.
 
 ## Planejadas (verificadas, ainda não usadas)
 
+Fontes de saída candidatas (pacotes do sistema, licença lida no arquivo
+`copyright` do pacote): Liberation Serif 2.1.5 (SIL OFL 1.1; métricas
+compatíveis com Times New Roman) e FreeSerif (GNU FreeFont, GPL-3+ com exceção
+para incorporação em documentos; cobre figurinas e ⩲/⩱).
+
 chess.js 1.4.0 (BSD-2-Clause), pdfjs-dist 6.4.299 (Apache-2.0), SDK `anthropic`
 2.1.0 (Apache-2.0), OCRmyPDF 17.13.0 (MPL-2.0), Noto Sans Symbols 2 (OFL-1.1),
 llama.cpp (MIT; pesos de modelos com licenças próprias), Docling 2.141.0 (MIT;

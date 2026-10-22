@@ -7,12 +7,13 @@ confirme ou corrija a convenção por documento, capítulo ou região.
 
 from __future__ import annotations
 
+import re
 from collections import Counter
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 
 from .alphabets import ENGLISH_ONLY, FIGURINE, PORTUGUESE_ONLY, Convention
-from .lexer import AtomKind, lex
+from .lexer import AtomKind, LexStyle, lex
 
 
 @dataclass(frozen=True)
@@ -62,3 +63,28 @@ def detect_convention(texts: Iterable[str], min_evidence: int = 3) -> Convention
     if counts["shared_letter"]:
         notes.append("apenas R e B observados: R pode ser torre (inglês) ou rei (português)")
     return ConventionReport(Convention.UNDETERMINED, False, evidence, tuple(notes))
+
+
+_NODOT = re.compile(r"(?<![\w.\-/])\d{1,3}\s+(?:[♔♕♖♗♘KQRBNDTC]?[a-h]?[1-8]?[x×:]?[a-h][1-8]|O-O|0-0)")
+# Só "12." (lance das brancas) conta: "12..." aparece nos dois estilos.
+_DOT = re.compile(r"(?<![\w.])\d{1,3}\.(?!\.)\s*(?:[♔♕♖♗♘KQRBNDTC]?[a-h]?[1-8]?[x×:]?[a-h][1-8]|O-O|0-0)")
+_ABBREV = re.compile(r"(?<=\s)([a-h])([a-h])(?=[\s+#!?⊙△]|$)")
+
+
+def detect_style(texts: Iterable[str], min_evidence: int = 5) -> tuple[LexStyle, dict[str, int]]:
+    """Detecta convenções tipográficas (números sem ponto, capturas abreviadas).
+
+    Só liga uma opção com evidência suficiente e predominante; as contagens são
+    devolvidas para exibição e confirmação.
+    """
+    nodot = dot = abbrev = 0
+    for text in texts:
+        nodot += len(_NODOT.findall(text))
+        dot += len(_DOT.findall(text))
+        abbrev += sum(1 for a, b in _ABBREV.findall(text) if abs(ord(a) - ord(b)) == 1)
+    evidence = {"numbers_without_dot": nodot, "numbers_with_dot": dot, "abbreviated_pawn_captures": abbrev}
+    style = LexStyle(
+        numbers_without_dot=nodot >= min_evidence and nodot > dot,
+        abbreviated_pawn_captures=abbrev >= min_evidence,
+    )
+    return style, evidence

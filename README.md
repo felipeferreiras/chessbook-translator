@@ -3,11 +3,11 @@
 Aplicação web **privada** para traduzir livros de xadrez em PDF do inglês para o
 português brasileiro, preservando notação, diagramas e organização editorial.
 
-> **Estado: Fase 1 concluída (investigação e arquitetura).** Ainda não há
-> interface nem pipeline de ponta a ponta. Existe um núcleo testado de
-> notação enxadrística, a proteção de lances para a tradução, um protótipo de
-> identificação visual de figurinas e um spike reproduzível das estratégias de
-> PDF. Ver `docs/plano-execucao.md`.
+> **Estado: Fase 1 concluída; Fase 2 (prova de conceito) em andamento.** Ainda
+> não há interface nem tradução/exportação de ponta a ponta. Existe um núcleo
+> testado de notação, a proteção de lances para a tradução, perfis de fontes
+> de xadrez, leitura de diagramas compostos em fonte e uma passagem de notação
+> que roda num livro real inteiro (ver `docs/research/05-amostra-dvoretsky.md`).
 
 ## O que já funciona (com testes)
 
@@ -29,8 +29,8 @@ Requisitos: Python 3.12+, [uv](https://docs.astral.sh/uv/), fonte DejaVu Sans
 cd backend
 uv venv .venv
 uv pip install --python .venv/bin/python -e ".[dev,spike]"
-.venv/bin/python -m pytest -q        # 89 testes
-.venv/bin/ruff check app tests ../spikes
+.venv/bin/python -m pytest -q        # 114 testes
+.venv/bin/ruff check app tests scripts ../spikes
 ```
 
 Spike de estratégias de PDF (gera PDFs, PNGs e `results.json`):

@@ -11,7 +11,7 @@ uv venv .venv && uv pip install --python .venv/bin/python -e ".[dev,spike]"
 Requisitos do sistema: fonte DejaVu Sans (`fonts-dejavu-core`); Tesseract é
 opcional (o teste de OCR é pulado se não estiver instalado).
 
-## Suíte atual (Fase 1) — 89 testes, todos passando em 2026-10-22
+## Suíte atual — 114 testes, todos passando em 2026-10-22
 
 | Arquivo | Cobre |
 |---|---|
@@ -19,6 +19,7 @@ opcional (o teste de OCR é pulado se não estiver instalado).
 | `test_notation_validate.py` | posição inicial não presumida, hipótese explícita, mesma linha nas três notações, capturas, xeque-mate, roque × `Kg1`, promoções, promoção sem peça (ambígua), SAN subespecificado (ambíguo), desambiguação por coluna/linha/casa, `R` torre × rei, ilegal com perda de contexto, FEN não padrão, números incompatíveis, variantes simples e aninhadas, variante ilegal sem quebrar a principal, ramificação implícita, lances sem número após prosa, marcadores incoerentes, en passant, OCR suspeito, encadeamento de regiões, descritiva |
 | `test_notation_render_convention.py` | preservação byte a byte, FAN→EN/PT, ida e volta EN→PT→FAN→EN, promoção, desambiguação e sinais mantidos, política `strict` × `symbol_only`, letra ambígua nunca convertida, lance ambíguo nunca convertido, detecção de convenção (6 casos) |
 | `test_translation_guard.py` | marcadores, restauração, marcador ausente/duplicado/inventado, casa alterada na prosa, reordenação, números |
+| `test_book_conventions.py` | números sem ponto, capturas abreviadas, símbolos do Informator colados, casa alternativa `(c2)`, parênteses de prosa, negrito como linha principal, ramificação decidida por um segmento posterior, ideias após △, numeração vinda do texto, leitura de diagramas em fonte (ida e volta, roque não inventado, defeito tipográfico, fileira deslocada, diagrama sem reis), rótulos, resolução de glifos com origem, glifo sem mapa, probe da fonte incorporada |
 | `test_pdf_fixtures.py` | extração de FAN Unicode, fonte figurina por letras, fonte de uso privado; proposta de mapa de glifos; letras comuns não confundidas; validação após mapeamento; caracterização do `insert_htmlbox`; caracterização do Tesseract com FAN |
 
 Casos ambíguos cujo resultado correto é **pedir revisão**: SAN subespecificado,
