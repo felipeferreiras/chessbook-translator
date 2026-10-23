@@ -295,3 +295,26 @@ def _tag_problems(translated: str) -> list[str]:
         if stack:
             return [f"marca <{stack[-1]}> não fechada na mesma linha"]
     return []
+
+
+def mask_edit(text: str, protected: Protected) -> str:
+    """Remascara um texto editado à mão: cada trecho de notação volta a ser marcador.
+
+    A revisão edita o texto final, com os lances visíveis. Para aceitar a
+    edição, cada trecho de notação do original precisa continuar lá, byte a
+    byte; os mais longos são procurados primeiro (um lance curto pode estar
+    contido num trecho maior). Depois disso, ``restore`` aplica as mesmas
+    regras da tradução automática (casas, números, símbolos, linhas,
+    parênteses). Levanta ``GuardViolation`` se algum trecho sumiu ou mudou.
+    """
+    out = text
+    problems = []
+    for key, slot in sorted(protected.slots.items(), key=lambda kv: -len(kv[1])):
+        if slot not in out:
+            problems.append(f"trecho de notação ⟦{key}⟧ alterado ou removido: {slot!r}")
+            continue
+        out = out.replace(slot, f"⟦{key}⟧", 1)
+    if problems:
+        raise GuardViolation(problems)
+    restore(out, protected)
+    return out

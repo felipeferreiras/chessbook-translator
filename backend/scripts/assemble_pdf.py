@@ -24,7 +24,7 @@ from app.layout.compose import BlockJob, compose_page, verify_text
 from app.pipeline.notation_pass import collect
 from app.translation.guard import protect, restore
 
-ACCEPTED = {"translated", "cached"}
+ACCEPTED = {"translated", "cached", "reviewed"}  # reviewed: editado no projeto
 
 
 def _runs(mask: list[bool], offset: int) -> list[tuple[int, int]]:
