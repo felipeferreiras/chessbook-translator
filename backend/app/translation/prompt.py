@@ -13,7 +13,7 @@ import json
 from .glossary import Glossary
 from .provider import Segment, TranslationRequest
 
-PROMPT_VERSION = "2026-10-23.1"
+PROMPT_VERSION = "2026-10-23.2"
 
 _RULES = """\
 Você é tradutor técnico especializado em literatura de xadrez. Traduza do inglês
@@ -43,7 +43,10 @@ Regras obrigatórias:
 8. O campo "context_before" é só contexto: não o traduza nem o inclua na saída.
 9. Quebras de linha ("\n") dentro de um segmento separam itens de lista,
    entradas de índice ou de sumário: preserve-as nos mesmos pontos.
-10. Responda apenas com o JSON pedido: {"translations": [{"id": ..., "text": ...}]},
+10. <b>…</b> marca negrito e <i>…</i> marca itálico do original. Coloque cada
+   par em volta das palavras correspondentes da tradução, na mesma linha; não
+   acrescente, remova nem use outras marcas.
+11. Responda apenas com o JSON pedido: {"translations": [{"id": ..., "text": ...}]},
    uma entrada por segmento, com o mesmo "id".
 """
 

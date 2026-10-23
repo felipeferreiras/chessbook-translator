@@ -170,3 +170,17 @@ def test_single_line_never_grows_over_a_neighbour():
     name = pymupdf.Rect(110, 480, 190, 490)
     rect, centered = _single_line_area(name, (48, 254), (48, 473), [pymupdf.Rect(230, 478, 250, 492)])
     assert centered and rect.x1 <= 227 and (rect.x0 + rect.x1) / 2 == 150
+
+
+def test_block_html_applies_prose_italic_and_bold_together():
+    job = BlockJob("x", layout(), 0, "Em Manual de Finais e depois", [(3, 9)], italic_ranges=[(3, 19)])
+    body, _ = block_html(job)
+    assert body == "Em <b><i>Manual</i></b><i> de Finais</i> e depois"
+
+
+def test_block_html_tabular_keeps_bold_chapter_line():
+    text = "Capítulo 2 Cavalo contra Peões\nRei no Canto\t72"
+    job = BlockJob("x", layout(), 0, text, [(0, 30)], tabular=True, italic_ranges=[(31, 34)])
+    body, _ = block_html(job)
+    assert "<td colspan=2><b>Capítulo 2 Cavalo contra Peões</b></td>" in body
+    assert "<td><i>Rei</i> no Canto</td><td class=n>72</td>" in body

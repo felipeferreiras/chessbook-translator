@@ -24,7 +24,7 @@ from app.chess.notation.lexer import DEFAULT_STYLE, LexStyle
 
 from .cache import TranslationCache
 from .glossary import Glossary
-from .guard import PLACEHOLDER_RE, GuardViolation, Protected, protect, restore
+from .guard import PLACEHOLDER_RE, TAG_RE, GuardViolation, Protected, protect, restore
 from .prompt import build_request, cache_key
 from .provider import ProviderError, ProviderRefusal, Segment, TranslationProvider, Usage
 
@@ -45,6 +45,8 @@ class SourceSegment:
     id: str
     text: str  # texto resolvido (glifos especiais já trocados)
     kind: str = "paragraph"
+    bold: tuple[bool, ...] = ()  # negrito por caractere de ``text``
+    italic: tuple[bool, ...] = ()
 
 
 @dataclass
@@ -91,7 +93,7 @@ class TranslationRun:
 
 
 def _needs_translation(masked: str) -> bool:
-    prose = PLACEHOLDER_RE.sub(" ", masked)
+    prose = TAG_RE.sub("", PLACEHOLDER_RE.sub(" ", masked))
     return re.search(r"[A-Za-z]{2,}", prose) is not None
 
 
@@ -129,7 +131,7 @@ def translate(
     system = build_request([], glossary, section).system_prompt
 
     for src in sources:
-        prot = protect(src.text, style)
+        prot = protect(src.text, style, src.bold, src.italic)
         protected[src.id] = prot
         seg = Segment(src.id, prot.masked, context_before=previous_masked[-600:], kind=src.kind)
         previous_masked = prot.masked

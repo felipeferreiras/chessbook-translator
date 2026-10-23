@@ -78,19 +78,20 @@ def main() -> None:
             if seg["status"] not in ACCEPTED or not seg["raw_translation"]:
                 keep.append(pymupdf.Rect(region.layout.text_rect))
                 continue
-            prot = protect(region.resolved.text, notation.style)
+            prot = protect(region.resolved.text, notation.style, region.main_mask, region.italic_mask)
             restored = restore(seg["raw_translation"], prot)
             if restored.text != seg["text"]:
                 raise SystemExit(f"{rid}: restauração diverge do resultado salvo")
-            bold = []
-            for start, end, key in restored.pieces:
+            bold = [(a, b) for a, b, tag in restored.styles if tag == "b"]
+            for start, end, key in restored.pieces:  # linha principal: negrito na notação
                 a, b = prot.slot_ranges[key]
                 mask = region.main_mask[a:b]
                 if mask and sum(mask) > len(mask) / 2:
                     bold.append((start, end))
+            italic = [(a, b) for a, b, tag in restored.styles if tag == "i"]
             slots[rid] = list(prot.slots.values())
-            jobs.append(BlockJob(rid, region.layout, region.column, restored.text, bold,
-                                 tabular="\t" in region.resolved.text))
+            jobs.append(BlockJob(rid, region.layout, region.column, restored.text, sorted(bold),
+                                 tabular="\t" in region.resolved.text, italic_ranges=italic))
         boards = [pymupdf.Rect(d.bbox) for d in notation.diagrams if d.page == p]
         report = compose_page(page, orig_page, jobs, boards, keep, p)
         verify_text(page, report, jobs, slots)

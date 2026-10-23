@@ -51,10 +51,11 @@ class Region:
     bbox: tuple[float, float, float, float]
     column: int
     resolved: ResolvedText
-    main_mask: list[bool]
+    main_mask: list[bool]  # negrito por caractere do texto resolvido (linha principal na notação)
     analysis: RegionAnalysis | None = None
     role: str = "text"  # text | header | footer
     layout: BlockLayout | None = None
+    italic_mask: list[bool] = field(default_factory=list)  # itálico por caractere do texto resolvido
 
 
 @dataclass
@@ -84,6 +85,19 @@ class DocumentNotation:
 
 def _is_bold(span: dict) -> bool:
     return bool(span["flags"] & 16) or "Bold" in span["font"]
+
+
+def _is_italic(span: dict) -> bool:
+    return bool(span["flags"] & 2) or "Italic" in span["font"] or "Oblique" in span["font"]
+
+
+def _italic_chars(spans: list[SpanText]) -> list[bool]:
+    """Itálico por caractere; separadores inseridos na junção herdam o anterior."""
+    out: list[bool] = []
+    for sp in spans:
+        flag = sp.italic if sp.font else (out[-1] if out else False)
+        out.extend([flag] * len(sp.text))
+    return out
 
 
 def visual_rows(lines: list[dict], tolerance: float = 2.0) -> list[list[dict]]:
@@ -162,7 +176,7 @@ def _block_parts(
                 row_text = row_text[1:]
             row_text = [dict(row_text[0], text=row_text[0]["text"].lstrip())] + row_text[1:]
         for span in row_text:
-            spans.append(SpanText(span["text"], span["font"], bold=_is_bold(span)))
+            spans.append(SpanText(span["text"], span["font"], bold=_is_bold(span), italic=_is_italic(span)))
             bold.extend([_is_bold(span)] * len(span["text"]))
         prev_x1 = max(sp["bbox"][2] for sp in row_text if sp["text"].strip())
         prev_tab = any(sp["text"] == "\t" for sp in row_text)
@@ -229,7 +243,7 @@ def _block_layout(block: dict) -> BlockLayout | None:
     font, size, color = max(weight, key=weight.get)
     total = sum(len(sp["text"].strip()) for sp in text_spans)
     bold_chars = sum(len(sp["text"].strip()) for sp in text_spans if _is_bold(sp))
-    italic_chars = sum(len(sp["text"].strip()) for sp in text_spans if sp["flags"] & 2 or "Italic" in sp["font"])
+    italic_chars = sum(len(sp["text"].strip()) for sp in text_spans if _is_italic(sp))
     x0s = [ln["bbox"][0] for ln in lines]
     x1s = [ln["bbox"][2] for ln in lines]
     centers = [(a + b) / 2 for a, b in zip(x0s, x1s, strict=True)]
@@ -299,7 +313,8 @@ def collect(doc: pymupdf.Document, pages: range | None = None) -> DocumentNotati
             resolved = resolve_spans(spans, KNOWN_PROFILES)
             role = "header" if block["bbox"][1] < 55 else "footer" if block["bbox"][1] > page.rect.height - 45 else "text"
             result.regions.append(Region(pno + 1, bbox, col, resolved, _main_mask(resolved, raw_bold), role=role,
-                                         layout=_block_layout(block)))
+                                         layout=_block_layout(block),
+                                         italic_mask=_main_mask(resolved, _italic_chars(spans))))
         # Rótulos ao lado dos diagramas: número ("1-21") e vez de jogar ("W", "B?").
         for diagram in (d for d in result.diagrams if d.page == pno + 1):
             area = pymupdf.Rect(diagram.bbox)

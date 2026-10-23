@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import html
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import numpy as np
@@ -80,8 +80,9 @@ class BlockJob:
     layout: BlockLayout
     column: int
     text: str  # tradução com notação restaurada
-    bold_ranges: list[tuple[int, int]] = field(default_factory=list)  # trechos de linha principal
+    bold_ranges: list[tuple[int, int]] = field(default_factory=list)  # linha principal e negrito da prosa
     tabular: bool = False
+    italic_ranges: list[tuple[int, int]] = field(default_factory=list)
 
 
 @dataclass
@@ -125,12 +126,17 @@ def family_for(font: str) -> tuple[str, str | None]:
     return "serif", f"{font} → Liberation Serif"
 
 
-def _inline_html(text: str, bold_ranges: list[tuple[int, int]]) -> str:
-    """HTML do texto: negrito nos trechos da linha principal, símbolos na FreeSerif."""
-    marks = [False] * len(text)
-    for a, b in bold_ranges:
-        for i in range(max(0, a), min(len(text), b)):
-            marks[i] = True
+def _inline_html(text: str, bold_ranges: list[tuple[int, int]], italic_ranges: list[tuple[int, int]] = (),
+                 offset: int = 0) -> str:
+    """HTML do texto: negrito e itálico nos trechos marcados, símbolos na FreeSerif.
+
+    ``offset``: posição de ``text`` no texto do bloco (células do sumário).
+    """
+    marks = [(False, False)] * len(text)
+    for ranges, which in ((bold_ranges, 0), (italic_ranges, 1)):
+        for a, b in ranges:
+            for i in range(max(0, a - offset), min(len(text), b - offset)):
+                marks[i] = (True, marks[i][1]) if which == 0 else (marks[i][0], True)
     out: list[str] = []
     i = 0
     while i < len(text):
@@ -139,7 +145,12 @@ def _inline_html(text: str, bold_ranges: list[tuple[int, int]]) -> str:
             j += 1
         chunk = html.escape(text[i:j])
         chunk = SYMBOLS.sub(r'<span class="fig">\1</span>', chunk).replace("\n", "<br>")
-        out.append(f"<b>{chunk}</b>" if marks[i] else chunk)
+        bold, italic = marks[i]
+        if italic:
+            chunk = f"<i>{chunk}</i>"
+        if bold:
+            chunk = f"<b>{chunk}</b>"
+        out.append(chunk)
         i = j
     return "".join(out)
 
@@ -167,15 +178,20 @@ def block_html(job: BlockJob, scale: float = 1.0) -> tuple[str, str]:
     )
     if job.tabular:
         rows = []
+        pos = 0
         for line in job.text.split("\n"):
             cells = line.split("\t")
+            head = " ".join(cells[:-1]) if len(cells) > 1 else cells[0]
+            # ' '.join troca cada tabulação por um espaço: as posições não mudam.
+            first = _inline_html(head, job.bold_ranges, job.italic_ranges, pos)
             if len(cells) == 1:
-                rows.append(f"<tr><td colspan=2>{_inline_html(cells[0], [])}</td></tr>")
+                rows.append(f"<tr><td colspan=2>{first}</td></tr>")
             else:
-                rows.append(f"<tr><td>{_inline_html(' '.join(cells[:-1]), [])}</td>"
-                            f"<td class=n>{_inline_html(cells[-1], [])}</td></tr>")
+                last = _inline_html(cells[-1], job.bold_ranges, job.italic_ranges, pos + len(line) - len(cells[-1]))
+                rows.append(f"<tr><td>{first}</td><td class=n>{last}</td></tr>")
+            pos += len(line) + 1
         return f"<table>{''.join(rows)}</table>", css
-    return _inline_html(job.text, job.bold_ranges), css
+    return _inline_html(job.text, job.bold_ranges, job.italic_ranges), css
 
 
 def _column_bounds(jobs: list[BlockJob], page: pymupdf.Page) -> dict[int, tuple[float, float]]:
@@ -382,7 +398,7 @@ def compose_page(page: pymupdf.Page, original: pymupdf.Page, jobs: list[BlockJob
             base, centered = _single_line_area(base, columns.get(job.column), (area_x0, area_x1), neighbours)
             if centered:
                 lay = BlockLayout(**{**lay.__dict__, "align": "center"})
-                job = BlockJob(job.region_id, lay, job.column, job.text, job.bold_ranges, job.tabular)
+                job = replace(job, layout=lay)
         pad = max(0.0, _line_height(lay) - lay.size)
         margin = pad / 2 + 1
         exact = pymupdf.Rect(base.x0, base.y0 - margin, base.x1, base.y1 + margin)

@@ -81,7 +81,8 @@ def main() -> None:
     notation = collect(doc)  # estilo e convenção detectados no livro inteiro
     wanted = set(parse_pages(args.pages))
     regions = [r for r in notation.regions if r.page in wanted and r.role == "text"]
-    sources = [SourceSegment(f"p{r.page}-{i}", r.resolved.text) for i, r in enumerate(regions)]
+    sources = [SourceSegment(f"p{r.page}-{i}", r.resolved.text, bold=tuple(r.main_mask), italic=tuple(r.italic_mask))
+               for i, r in enumerate(regions)]
     run = translate(sources, provider, Glossary.load(), section=doc.metadata.get("title", ""),
                     style=notation.style, cache=TranslationCache(args.out / "cache.sqlite"))
 

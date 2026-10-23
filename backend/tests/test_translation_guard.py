@@ -92,3 +92,52 @@ def test_notation_moved_across_line_break_blocks():
         restore(f"⟦{keys[0]}⟧ ⟦{keys[1]}⟧\nera necessário, e as pretas abandonaram.", p)
     ok = restore(f"⟦{keys[0]}⟧\n⟦{keys[1]}⟧ era necessário, e as pretas abandonaram.", p)
     assert ok.text.startswith("1.Bd1+!? Kh4??\n1...Kg6! era")
+
+
+def _mask(text: str, styled: str) -> list[bool]:
+    start = text.index(styled)
+    return [start <= i < start + len(styled) for i in range(len(text))]
+
+
+def test_prose_bold_and_italic_become_tags():
+    text = "deflection: 2-29, 5-15\nbarrier: 2-11"
+    bold = [a or b for a, b in zip(_mask(text, "deflection:"), _mask(text, "barrier:"), strict=True)]
+    p = protect(text, bold=bold)
+    assert p.masked == "<b>deflection:</b> 2-29, 5-15\n<b>barrier:</b> 2-11"
+    assert p.tags == {"b": 2}
+    out = restore("<b>desvio:</b> 2-29, 5-15\n<b>barreira:</b> 2-11", p)
+    assert out.text == "desvio: 2-29, 5-15\nbarreira: 2-11"
+    assert [out.text[a:b] for a, b, _ in out.styles] == ["desvio:", "barreira:"]
+    assert out.warnings == []
+
+
+def test_italic_title_inside_prose_and_notation_untouched():
+    text = "In Dvoretsky's Endgame Manual after 1.e4 e5 White plays."
+    p = protect(text, italic=_mask(text, "Dvoretsky's Endgame Manual"))
+    assert p.masked == "In <i>Dvoretsky's Endgame Manual</i> after ⟦1⟧ White plays."
+    out = restore("Em <i>Dvoretsky's Endgame Manual</i>, depois de ⟦1⟧, as brancas jogam.", p)
+    assert out.styles == [(3, 29, "i")] and "1.e4 e5" in out.text
+
+
+def test_style_covering_all_prose_is_not_tagged():
+    text = "Usually, a knight draws easily against a rook."
+    assert protect(text, bold=[True] * len(text), italic=[True] * len(text)).masked == text
+
+
+def test_punctuation_alone_is_not_tagged():
+    text = "1.e4, e5 and then"
+    p = protect(text, bold=[True] * 5 + [False] * (len(text) - 5))
+    assert "<b>" not in p.masked
+
+
+def test_malformed_tags_block_and_lost_tags_warn():
+    text = "barrier: 2-11 and more"
+    p = protect(text, bold=_mask(text, "barrier:"))
+    with pytest.raises(GuardViolation, match="não fechada"):
+        restore("<b>barreira: 2-11 e mais", p)
+    with pytest.raises(GuardViolation, match="sem abertura"):
+        restore("barreira:</b> 2-11 e mais", p)
+    with pytest.raises(GuardViolation, match="desconhecida"):
+        restore("<strong>barreira:</strong> 2-11 e mais", p)
+    out = restore("barreira: 2-11 e mais", p)
+    assert any("negrito" in w for w in out.warnings) and out.styles == []

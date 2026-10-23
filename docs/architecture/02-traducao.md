@@ -64,7 +64,9 @@ Para cada lote (até 20 segmentos ou cerca de 6.000 caracteres):
 
 * as instruções de tradução e o glossário inteiro (fixos, iguais para todos);
 * o título do livro como "seção";
-* cada segmento **com a notação substituída por marcadores** `⟦n⟧`;
+* cada segmento **com a notação substituída por marcadores** `⟦n⟧` e o
+  negrito/itálico da prosa marcado com `<b>…</b>` e `<i>…</i>` (estilo que
+  cobre o bloco inteiro não é marcado: vem do layout do bloco);
 * o parágrafo anterior, também mascarado, como contexto.
 
 Não são enviados: o PDF, imagens, diagramas, lances, nomes de arquivo ou
@@ -84,7 +86,12 @@ Cada tradução só é aceita se:
 
 4. os números da prosa (referências de diagrama, exercícios, anos) forem os
    mesmos — regra que passou a bloquear depois que a primeira tradução real
-   inseriu um número a mais num índice.
+   inseriu um número a mais num índice;
+5. as quebras de linha e tabulações forem as mesmas e cada marcador continuar
+   na mesma linha (um marcador nunca atravessa uma quebra);
+6. as marcas `<b>`/`<i>` estiverem bem formadas (abertas e fechadas na mesma
+   linha, sem marcas desconhecidas). Número de trechos marcados diferente do
+   original é só aviso: o texto continua correto, perde-se uma ênfase.
 
 Se falhar, o segmento é reenviado sozinho uma vez; persistindo, fica
 `needs_review` com a saída bruta guardada. Traduções em cache que não passam

@@ -17,6 +17,12 @@ from dataclasses import dataclass, field
 from app.chess.notation.lexer import DEFAULT_STYLE, AtomKind, LexStyle, lex
 
 PLACEHOLDER_RE = re.compile(r"⟦(\d+)⟧")
+# Negrito e itálico da prosa vão ao tradutor como <b>…</b> e <i>…</i>.
+TAG_RE = re.compile(r"</?([bi])>")
+_ANY_TAG_RE = re.compile(r"</?[A-Za-z][A-Za-z0-9]*\s*/?>")
+_TOKEN_RE = re.compile(r"⟦(\d+)⟧|</?([bi])>")
+_LETTERS_RE = re.compile(r"[^\W\d_]{2}")
+TAG_NAMES = {"b": "negrito", "i": "itálico"}
 SQUARE_RE = re.compile(r"(?<![\w])[a-h][1-8](?![\w])")
 NUMBER_RE = re.compile(r"(?<![\w⟦])\d+(?![\w⟧])")
 # Símbolos de avaliação e anotação fora da notação ("△ ...", "+−" isolado).
@@ -38,6 +44,7 @@ class Protected:
     numbers: Counter[str]
     symbols: Counter[str] = field(default_factory=Counter)
     slot_ranges: dict[str, tuple[int, int]] = field(default_factory=dict)  # posição no original
+    tags: Counter[str] = field(default_factory=Counter)  # trechos de prosa marcados com <b>/<i>
 
 
 @dataclass
@@ -45,6 +52,7 @@ class Restored:
     text: str
     warnings: list[str] = field(default_factory=list)
     pieces: list[tuple[int, int, str]] = field(default_factory=list)  # (início, fim, marcador) no texto final
+    styles: list[tuple[int, int, str]] = field(default_factory=list)  # (início, fim, "b"|"i") no texto final
 
 
 _NOTATION_KINDS = (AtomKind.MOVE, AtomKind.SUSPICIOUS, AtomKind.DESCRIPTIVE, AtomKind.ROUTE)
@@ -69,28 +77,70 @@ def _groups(span, text: str) -> list[list]:
     return [g for g in groups if g and any(a.kind in _NOTATION_KINDS for a in g)]
 
 
-def protect(text: str, style: LexStyle = DEFAULT_STYLE) -> Protected:
+def _styled_prose(chunk: str, flags: list[tuple[bool, bool]], use: tuple[bool, bool], tags: Counter[str]) -> str:
+    """Marca com <b>/<i> os trechos de prosa (sem quebra, tabulação nem notação) com estilo."""
+    out: list[str] = []
+    i = 0
+    while i < len(chunk):
+        j = i
+        while j < len(chunk) and flags[j] == flags[i] and chunk[j] not in "\n\t":
+            j += 1
+        if j == i:  # quebra ou tabulação
+            out.append(chunk[i])
+            i += 1
+            continue
+        piece = chunk[i:j]
+        bold, italic = flags[i][0] and use[0], flags[i][1] and use[1]
+        core = piece.strip()
+        if (bold or italic) and _LETTERS_RE.search(core):
+            lead = piece[:len(piece) - len(piece.lstrip())]
+            trail = piece[len(piece.rstrip()):]
+            opened = ("<b>" if bold else "") + ("<i>" if italic else "")
+            closed = ("</i>" if italic else "") + ("</b>" if bold else "")
+            tags.update(["b"] * bold + ["i"] * italic)
+            piece = lead + opened + core + closed + trail
+        out.append(piece)
+        i = j
+    return "".join(out)
+
+
+def protect(text: str, style: LexStyle = DEFAULT_STYLE, bold: list[bool] | tuple[bool, ...] = (),
+            italic: list[bool] | tuple[bool, ...] = ()) -> Protected:
+    """Mascara a notação; ``bold``/``italic`` (por caractere) marcam a prosa com <b>/<i>.
+
+    Estilo que cobre toda a prosa do bloco não é marcado: vem do próprio bloco.
+    """
     lexed = lex(text, style)
-    parts: list[str] = []
     slots: dict[str, str] = {}
     ranges: dict[str, tuple[int, int]] = {}
-    cursor = 0
     for span in lexed.spans:
         for group in _groups(span, text):
             start, end = group[0].start, group[-1].end
             key = str(len(slots) + 1)
             slots[key] = text[start:end]
             ranges[key] = (start, end)
-            parts.append(text[cursor:start])
-            parts.append(f"⟦{key}⟧")
-            cursor = end
-    parts.append(text[cursor:])
+    flags = [(i < len(bold) and bool(bold[i]), i < len(italic) and bool(italic[i])) for i in range(len(text))]
+    in_slot = [False] * len(text)
+    for start, end in ranges.values():
+        for i in range(start, end):
+            in_slot[i] = True
+    visible = [i for i, ch in enumerate(text) if not in_slot[i] and not ch.isspace()]
+    use = (not all(flags[i][0] for i in visible) if visible else False,
+           not all(flags[i][1] for i in visible) if visible else False)
+    tags: Counter[str] = Counter()
+    parts: list[str] = []
+    cursor = 0
+    for key, (start, end) in ranges.items():
+        parts.append(_styled_prose(text[cursor:start], flags[cursor:start], use, tags))
+        parts.append(f"⟦{key}⟧")
+        cursor = end
+    parts.append(_styled_prose(text[cursor:], flags[cursor:], use, tags))
     masked = "".join(parts)
-    prose = PLACEHOLDER_RE.sub(" ", masked)
+    prose = TAG_RE.sub("", PLACEHOLDER_RE.sub(" ", masked))
     return Protected(
         original=text, masked=masked, slots=slots,
         squares=Counter(SQUARE_RE.findall(prose)), numbers=Counter(NUMBER_RE.findall(prose)),
-        symbols=Counter(SYMBOL_RE.findall(prose)), slot_ranges=ranges,
+        symbols=Counter(SYMBOL_RE.findall(prose)), slot_ranges=ranges, tags=tags,
     )
 
 
@@ -105,7 +155,12 @@ def restore(translated: str, protected: Protected) -> Restored:
     for key in found:
         if key not in protected.slots:
             problems.append(f"marcador desconhecido ⟦{key}⟧")
-    prose = PLACEHOLDER_RE.sub(" ", translated)
+    unknown = [t for t in _ANY_TAG_RE.findall(translated) if not TAG_RE.fullmatch(t)
+               and t not in protected.original]
+    if unknown:
+        problems.append(f"marcação desconhecida na tradução: {sorted(set(unknown))}")
+    problems.extend(_tag_problems(translated))
+    prose = TAG_RE.sub("", PLACEHOLDER_RE.sub(" ", translated))
     squares = Counter(SQUARE_RE.findall(prose))
     if squares != protected.squares:
         problems.append(
@@ -143,16 +198,48 @@ def restore(translated: str, protected: Protected) -> Restored:
     order = [int(k) for k in PLACEHOLDER_RE.findall(translated)]
     if order != sorted(order):
         warnings.append("ordem dos trechos de notação foi alterada pela tradução")
+    found_tags = Counter(m.group(1) for m in TAG_RE.finditer(translated) if not m.group(0).startswith("</"))
+    for tag, name in TAG_NAMES.items():
+        if found_tags[tag] != protected.tags[tag]:
+            warnings.append(f"trechos em {name} divergem: original={protected.tags[tag]} tradução={found_tags[tag]}")
     out: list[str] = []
     pieces: list[tuple[int, int, str]] = []
+    styles: list[tuple[int, int, str]] = []
+    opened: dict[str, int] = {}
     cursor = length = 0
-    for m in PLACEHOLDER_RE.finditer(translated):
+    for m in _TOKEN_RE.finditer(translated):
         out.append(translated[cursor:m.start()])
         length += m.start() - cursor
-        slot = protected.slots[m.group(1)]
-        pieces.append((length, length + len(slot), m.group(1)))
-        out.append(slot)
-        length += len(slot)
         cursor = m.end()
+        if m.group(1):
+            slot = protected.slots[m.group(1)]
+            pieces.append((length, length + len(slot), m.group(1)))
+            out.append(slot)
+            length += len(slot)
+        elif m.group(0).startswith("</"):
+            start = opened.pop(m.group(2))
+            if length > start:
+                styles.append((start, length, m.group(2)))
+        else:
+            opened[m.group(2)] = length
     out.append(translated[cursor:])
-    return Restored(text="".join(out), warnings=warnings, pieces=pieces)
+    return Restored(text="".join(out), warnings=warnings, pieces=pieces, styles=sorted(styles))
+
+
+def _tag_problems(translated: str) -> list[str]:
+    """<b>/<i> precisam estar abertos e fechados em ordem, sem atravessar linhas."""
+    stack: list[str] = []
+    for line in translated.split("\n"):
+        for m in TAG_RE.finditer(line):
+            tag = m.group(1)
+            if not m.group(0).startswith("</"):
+                if tag in stack:
+                    return [f"marca <{tag}> aberta duas vezes"]
+                stack.append(tag)
+            elif not stack or stack[-1] != tag:
+                return [f"marca </{tag}> sem abertura correspondente"]
+            else:
+                stack.pop()
+        if stack:
+            return [f"marca <{stack[-1]}> não fechada na mesma linha"]
+    return []

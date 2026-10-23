@@ -82,10 +82,6 @@ em uma linha só), a comparação usava a caixa do glifo inteira e acusava como
 
 ## Limitações conhecidas
 
-* Negrito e itálico **dentro da prosa** se perdem (verbetes do índice,
-  títulos de capítulo no sumário, títulos de obras em itálico). Só o negrito da
-  linha principal, que está na notação, é reaplicado. Próximo passo: enviar
-  marcas de formatação ao tradutor como marcadores protegidos.
 * Fundos sombreados ficam na posição original; quando o fluxo desloca o texto,
   o sombreado pode não acompanhar exatamente.
 * Blocos só de notação não são deslocados (mantêm a fonte figurina original);

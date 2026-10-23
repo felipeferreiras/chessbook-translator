@@ -11,19 +11,19 @@ uv venv .venv && uv pip install --python .venv/bin/python -e ".[dev,spike]"
 Requisitos do sistema: fonte DejaVu Sans (`fonts-dejavu-core`); Tesseract é
 opcional (o teste de OCR é pulado se não estiver instalado).
 
-## Suíte atual — 188 testes, todos passando em 2026-10-23
+## Suíte atual — 195 testes, todos passando em 2026-10-23
 
 | Arquivo | Cobre |
 |---|---|
 | `test_notation_lexer.py` | formas de lance (EN, PT, FAN, longa, promoções, e.p., roques com O/0), números de lance, reticências, casas na prosa, parênteses de prosa × variantes, padrões de OCR, descritiva, preservação de posições |
 | `test_notation_validate.py` | posição inicial não presumida, hipótese explícita, mesma linha nas três notações, capturas, xeque-mate, roque × `Kg1`, promoções, promoção sem peça (ambígua), SAN subespecificado (ambíguo), desambiguação por coluna/linha/casa, `R` torre × rei, ilegal com perda de contexto, FEN não padrão, números incompatíveis, variantes simples e aninhadas, variante ilegal sem quebrar a principal, ramificação implícita, lances sem número após prosa, marcadores incoerentes, en passant, OCR suspeito, encadeamento de regiões, descritiva |
 | `test_notation_render_convention.py` | preservação byte a byte, FAN→EN/PT, ida e volta EN→PT→FAN→EN, promoção, desambiguação e sinais mantidos, política `strict` × `symbol_only`, letra ambígua nunca convertida, lance ambíguo nunca convertido, detecção de convenção (6 casos) |
-| `test_translation_guard.py` | marcadores, restauração, marcador ausente/duplicado/inventado, casa alterada na prosa, reordenação, números, quebra de linha perdida e marcador mudado de linha (bloqueiam) |
+| `test_translation_guard.py` | marcadores, restauração, marcador ausente/duplicado/inventado, casa alterada na prosa, reordenação, números, quebra de linha perdida e marcador mudado de linha (bloqueiam), negrito/itálico da prosa como `<b>`/`<i>` (marcação, restauração, estilo do bloco inteiro não marcado, marcas malformadas bloqueiam, marcas perdidas avisam) |
 | `test_book_conventions.py` | números sem ponto, capturas abreviadas, símbolos do Informator colados, casa alternativa `(c2)`, parênteses de prosa, negrito como linha principal, ramificação decidida por um segmento posterior, ideias após △, numeração vinda do texto, leitura de diagramas em fonte (ida e volta, roque não inventado, defeito tipográfico, fileira deslocada, diagrama sem reis), rótulos, resolução de glifos com origem, glifo sem mapa, probe da fonte incorporada |
 | `test_translation_providers.py` | prompt e glossário; para Pollinations, Claude, ChatGPT e Gemini: argumentos do pedido e leitura de respostas construídas com as classes reais de cada SDK, recusas, bloqueios, cortes por limite, JSON inválido; configuração (privacidade, chave, modelo obrigatório, `.env`) |
 | `test_translation_service.py` | fluxo completo com notação restaurada byte a byte, segmentos só de notação não enviados, contexto mascarado, marcador perdido → nova tentativa → revisão, casa ou símbolo alterado rejeitado, cache, lotes, disjuntor após falhas, recusa, id ausente, razão de comprimento |
 | `test_line_joining.py` | hífen no fim da linha: referências, casas e lances partidos, hífen suspenso, nomes compostos, hifenização desfeita só com evidência do vocabulário, alinhamento do negrito |
-| `test_layout_compose.py` | montagem em página sintética: original removido e tabuleiro intacto, fluxo empurra o bloco seguinte, tabuleiro encerra o fluxo, bloco que não cabe vai para revisão, redação recortada fora do tabuleiro, moldura do diagrama, linha única centralizada sem invadir vizinhos, HTML (negrito, símbolos, sumário em tabela), substituição de fontes, notação ausente |
+| `test_layout_compose.py` | montagem em página sintética: original removido e tabuleiro intacto, fluxo empurra o bloco seguinte, tabuleiro encerra o fluxo, bloco que não cabe vai para revisão, redação recortada fora do tabuleiro, moldura do diagrama, linha única centralizada sem invadir vizinhos, HTML (negrito, itálico, símbolos, sumário em tabela com estilo por célula), substituição de fontes, notação ausente |
 | `test_pdf_fixtures.py` | extração de FAN Unicode, fonte figurina por letras, fonte de uso privado; proposta de mapa de glifos; letras comuns não confundidas; validação após mapeamento; caracterização do `insert_htmlbox`; caracterização do Tesseract com FAN |
 
 Casos ambíguos cujo resultado correto é **pedir revisão**: SAN subespecificado,
