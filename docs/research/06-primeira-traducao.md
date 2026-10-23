@@ -56,3 +56,32 @@ Leitura humana (página 21 inteira e casos sinalizados):
    traduzir o livro inteiro.
 3. A revisão humana continua necessária para terminologia: nenhuma regra
    automática distingue "desvio" de "atração".
+
+## Comparação de modelos (páginas 21 e 438)
+
+Mesmo prompt, glossário e regras; 25 segmentos com prosa. Pedido do usuário:
+comparar GPT-5.4 Nano, GPT-5.5 e Gemini 3.8 Flash (ids oficiais da
+Pollinations, não as cópias `community/`).
+
+| | GPT-5.4 Nano | GPT-5.5 | Gemini 3.8 Flash |
+|---|---|---|---|
+| Segmentos aceitos | 25/25 | 25/25 | **não rodou**: saldo pago insuficiente (HTTP 402) |
+| Notação e números | intactos | intactos | — |
+| "deflection" (desvio) | "atração" ✗ | "desvio" ✓ | — |
+| "desperado" | "desgraçado" ✗ | "desperado" ✓ | — |
+| Nome de cidade | traduzido ✗ | mantido ✓ | — |
+| "barrier", "bad bishop" | "bloqueio", "mau bispo" | "barreira", "bispo ruim" | — |
+| Preço (entrada / saída por milhão, pollen) | 0,15 / 0,94 | 3,75 / 22,5 | 0,75 / 3,75 (catálogo) |
+| Custo medido, 2 páginas | ≈ 0,003 | ≈ 0,13 | — |
+| Estimativa para 441 páginas | ≈ 0,5 | ≈ 28 | não medido |
+
+Observações:
+
+* O GPT-5.5 acertou todos os termos em que o Nano errou nessas duas páginas.
+  Ainda tem defeitos de estilo ("As pretas, a jogar, jogam…", pontuação dupla
+  "!.") que a revisão deve corrigir.
+* As duas rodadas mostraram um problema da extração, não da tradução:
+  referências partidas em fim de linha ("1- 186") chegam assim ao tradutor.
+  O Nano às vezes as junta, o GPT-5.5 as preserva. A junção deve ser feita na
+  extração, de forma controlada.
+* Com duas páginas, a comparação é indicativa, não estatística.
