@@ -85,9 +85,14 @@ OUTPUT_SCHEMA: dict = {
 def parse_output(raw: str, expected_ids: list[str]) -> dict[str, str]:
     """Converte a resposta JSON em {id: texto}; ids desconhecidos são descartados."""
     import json
+    import re
 
+    text = raw.strip()
+    fenced = re.match(r"^```(?:json)?\s*(.*?)\s*```$", text, re.DOTALL)
+    if fenced:  # modelos sem modo JSON costumam cercar a resposta com ```json
+        text = fenced.group(1)
     try:
-        data = json.loads(raw)
+        data = json.loads(text)
     except json.JSONDecodeError as exc:
         raise ProviderError(f"resposta não é JSON válido: {exc}") from exc
     items = data.get("translations") if isinstance(data, dict) else None

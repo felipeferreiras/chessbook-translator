@@ -12,15 +12,17 @@ from types import SimpleNamespace
 import pytest
 from anthropic.types.beta import BetaMessage
 from google.genai import types as gtypes
+from openai.types.chat import ChatCompletion
 from openai.types.responses import Response
 
-from app.translation.config import load_env_file, provider_from_env
+from app.translation.config import load_env_file, model_warnings, provider_from_env
 from app.translation.glossary import Glossary
 from app.translation.prompt import build_request
 from app.translation.provider import OUTPUT_SCHEMA, ConfigurationError, ProviderError, ProviderRefusal, Segment
 from app.translation.providers.anthropic_provider import AnthropicProvider
 from app.translation.providers.gemini_provider import GeminiProvider
 from app.translation.providers.openai_provider import OpenAIProvider
+from app.translation.providers.pollinations_provider import BASE_URL, PollinationsProvider
 
 SEGMENTS = [Segment("p1", "White wins after ⟦1⟧ because the king reaches e5."),
             Segment("p2", "Black is in zugzwang.", context_before="White wins after ⟦1⟧")]
@@ -240,3 +242,74 @@ def test_env_file_does_not_override_environment(tmp_path):
     env = {"A": "já definido"}
     load_env_file(f, env)
     assert env == {"A": "já definido", "B": "dois"}
+
+
+# --- Pollinations (API compatível com OpenAI) ---------------------------------
+
+
+
+def chat_completion(content=OUT, finish="stop", refusal=None, model="openai/gpt-5.5"):
+    return ChatCompletion.model_validate({
+        "id": "c1", "object": "chat.completion", "created": 0, "model": model,
+        "choices": [{"index": 0, "finish_reason": finish,
+                     "message": {"role": "assistant", "content": content, "refusal": refusal}}],
+        "usage": {"prompt_tokens": 700, "completion_tokens": 90, "total_tokens": 790,
+                  "prompt_tokens_details": {"cached_tokens": 500}},
+    })
+
+
+def pollinations_provider(response, **kw):
+    rec = Recorder(response)
+    client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=rec)))
+    return PollinationsProvider(model="openai/gpt-5.5", client=client, **kw), rec
+
+
+def test_pollinations_request_and_response():
+    prov, rec = pollinations_provider(chat_completion(), reasoning_effort="low")
+    out = prov.translate_batch(request())
+    k = rec.kwargs
+    assert k["model"] == "openai/gpt-5.5" and k["reasoning_effort"] == "low"
+    assert [m["role"] for m in k["messages"]] == ["system", "user"]
+    assert k["response_format"]["type"] == "json_schema"
+    assert k["response_format"]["json_schema"]["schema"] == OUTPUT_SCHEMA
+    assert out.translations["p2"] == "As pretas estão em zugzwang."
+    assert (out.usage.input_tokens, out.usage.output_tokens, out.usage.cached_input_tokens) == (700, 90, 500)
+
+
+def test_pollinations_json_modes():
+    prov, rec = pollinations_provider(chat_completion(), json_mode="object")
+    prov.translate_batch(request())
+    assert rec.kwargs["response_format"] == {"type": "json_object"}
+    prov, rec = pollinations_provider(chat_completion("```json\n" + OUT + "\n```"), json_mode="none")
+    out = prov.translate_batch(request())
+    assert "response_format" not in rec.kwargs and out.translations["p1"].startswith("As brancas")
+
+
+@pytest.mark.parametrize("kwargs, error", [
+    ({"finish": "length"}, ProviderError),
+    ({"finish": "content_filter"}, ProviderRefusal),
+    ({"refusal": "não posso"}, ProviderRefusal),
+    ({"content": "Safety: Safe\nCategories: None"}, ProviderError),  # saída típica de modelo de moderação
+])
+def test_pollinations_failures(kwargs, error):
+    prov, _ = pollinations_provider(chat_completion(**kwargs))
+    with pytest.raises(error):
+        prov.translate_batch(request())
+
+
+def test_pollinations_config_and_base_url():
+    env = {"CHESSBOOK_PRIVACY_MODE": "remote_allowed", "CHESSBOOK_TRANSLATION_PROVIDER": "pollinations",
+           "POLLINATIONS_API_KEY": "sk_teste", "CHESSBOOK_POLLINATIONS_MODEL": "google/gemini-3.8-flash"}
+    p = provider_from_env(env)
+    assert (p.name, p.model, p.json_mode) == ("pollinations", "google/gemini-3.8-flash", "schema")
+    assert str(p.client.base_url).rstrip("/") == BASE_URL
+    assert provider_from_env(env, model="openai/gpt-5.5").model == "openai/gpt-5.5"
+    with pytest.raises(ConfigurationError, match="POLLINATIONS_API_KEY"):
+        provider_from_env({k: v for k, v in env.items() if k != "POLLINATIONS_API_KEY"})
+    with pytest.raises(ConfigurationError, match="CHESSBOOK_POLLINATIONS_JSON"):
+        provider_from_env({**env, "CHESSBOOK_POLLINATIONS_JSON": "xml"})
+
+
+def test_moderation_model_is_flagged():
+    assert model_warnings("qwen/qwen3guard-gen-8b")
+    assert model_warnings("openai/gpt-5.5") == []

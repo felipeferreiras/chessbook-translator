@@ -29,7 +29,7 @@ Requisitos: Python 3.12+, [uv](https://docs.astral.sh/uv/), fonte DejaVu Sans
 cd backend
 uv venv .venv
 uv pip install --python .venv/bin/python -e ".[dev,spike]"   # inclui os SDKs de Claude, OpenAI e Gemini
-.venv/bin/python -m pytest -q        # 148 testes
+.venv/bin/python -m pytest -q        # 156 testes
 .venv/bin/ruff check app tests scripts ../spikes
 ```
 
@@ -43,7 +43,8 @@ Spike de estratégias de PDF (gera PDFs, PNGs e `results.json`):
 
 Configure `.env` a partir de `.env.example` (provedor, chave, modelo e
 `CHESSBOOK_PRIVACY_MODE=remote_allowed`) e veja `docs/architecture/02-traducao.md`.
-Nenhuma chamada real a provedores foi feita até agora: falta uma chave de API.
+Nenhuma chamada real foi concluída até agora: a rede do ambiente de nuvem
+bloqueia `gen.pollinations.ai` (ver `docs/architecture/02-traducao.md`).
 
 ## Documentação
 

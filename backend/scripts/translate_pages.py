@@ -2,7 +2,7 @@
 
 Uso (a partir de backend/):
     .venv/bin/python -m scripts.translate_pages LIVRO.pdf SAÍDA --pages 15,21,62
-        [--provider anthropic|openai|gemini|fake] [--env-file ../.env]
+        [--provider pollinations|anthropic|openai|gemini|fake] [--model ID] [--env-file ../.env]
 
 Configuração em ``.env`` (ver ``.env.example`` e ``app/translation/config.py``).
 O diretório de saída deve ficar FORA do repositório: contém o texto do livro.
@@ -21,7 +21,7 @@ import pymupdf
 
 from app.pipeline.notation_pass import collect
 from app.translation.cache import TranslationCache
-from app.translation.config import load_env_file, provider_from_env
+from app.translation.config import load_env_file, model_warnings, provider_from_env
 from app.translation.glossary import Glossary
 from app.translation.provider import ConfigurationError
 from app.translation.service import SourceSegment, translate
@@ -65,13 +65,16 @@ def main() -> None:
     ap.add_argument("out", type=Path)
     ap.add_argument("--pages", required=True, help="ex.: 15,21,60-62")
     ap.add_argument("--provider")
+    ap.add_argument("--model", help="substitui o modelo do .env (ex.: openai/gpt-5.5 na Pollinations)")
     ap.add_argument("--env-file", type=Path, default=ROOT / ".env")
     args = ap.parse_args()
     load_env_file(args.env_file)
     try:
-        provider = provider_from_env(name=args.provider)
+        provider = provider_from_env(name=args.provider, model=args.model)
     except ConfigurationError as exc:
         raise SystemExit(f"Configuração: {exc}") from exc
+    for warning in model_warnings(provider.model):
+        print(f"AVISO: {warning}")
     args.out.mkdir(parents=True, exist_ok=True)
 
     doc = pymupdf.open(args.pdf)

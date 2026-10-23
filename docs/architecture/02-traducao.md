@@ -1,8 +1,9 @@
 # Camada de tradução
 
 Estado: implementada e testada com provedor de teste e com respostas simuladas
-pelos tipos reais de cada SDK. **Ainda não foi feita nenhuma chamada real** a
-Claude, ChatGPT ou Gemini: esta sessão não tem chaves de API. O primeiro uso
+pelos tipos reais de cada SDK. **Ainda não foi feita nenhuma chamada real com
+sucesso.** Em 2026-10-23 a tentativa pela Pollinations falhou porque a política
+de rede do ambiente bloqueia `gen.pollinations.ai`. O primeiro uso
 com chave deve começar por poucas páginas (ver "Primeiro uso").
 
 ## Provedores
@@ -12,6 +13,7 @@ com chave deve começar por poucas páginas (ver "Primeiro uso").
 | `anthropic` (Claude) | `anthropic` 2.1.0 (Apache-2.0) | Messages (beta, por causa de `fallbacks`) | padrão `claude-opus-5-5`; configurável | `output_config.format` JSON Schema |
 | `openai` (ChatGPT) | `openai` 3.36.1 (Apache-2.0) | Responses | **obrigatório configurar** | `text.format` JSON Schema estrito |
 | `gemini` (Google) | `google-genai` 2.32.0 (Apache-2.0) | `models.generate_content` | **obrigatório configurar** | `response_json_schema` |
+| `pollinations` | `openai` 3.36.1 apontado para `https://gen.pollinations.ai/v1` | Chat Completions | **obrigatório configurar** (`openai/...`, `google/...`, `qwen/...`) | `response_format` JSON Schema (ou `json_object`/nenhum) |
 | `fake` | — | local | — | — (só marca o texto com `[PT-TESTE]`) |
 
 Para OpenAI e Gemini o código não fixa um nome de modelo: os catálogos mudam
@@ -30,6 +32,31 @@ Detalhes por provedor:
 * **Gemini:** chave em `GEMINI_API_KEY` (ou `GOOGLE_API_KEY`).
 * Os três: recusa, bloqueio de segurança, resposta incompleta ou cortada por
   limite de tokens viram erro explícito, nunca texto parcial aceito.
+
+### Pollinations
+
+Decisão do usuário (2026-10-23): usar a Pollinations como ponto único, com uma
+chave `sk_` dando acesso a modelos de OpenAI, Google, Qwen e outros. Fatos da
+documentação oficial (v0.3.0, lida em 2026-10-23 a partir do repositório
+`pollinations/pollinations`, arquivo `APIDOCS.md`):
+
+* base `https://gen.pollinations.ai/v1`, chave em `Authorization: Bearer`;
+* Chat Completions "totalmente compatível", com saída estruturada;
+* catálogo público em `GET /v1/models`; ids no formato `fornecedor/modelo`.
+
+Cuidados:
+
+* **O texto passa por um intermediário** (Pollinations) e depois pelo
+  fornecedor do modelo. A documentação não descreve retenção de texto
+  (só de mídia: 30 dias).
+* **`qwen/qwen3guard-gen-8b` é um modelo de moderação**: classifica conteúdo
+  como seguro ou inseguro, não traduz. O script avisa quando um modelo com
+  "guard" no nome é escolhido; a resposta dele deve falhar na validação de
+  formato e ir para `failed`, sem ser aceita como tradução.
+* Nem todo modelo aceita JSON Schema: se der erro, use
+  `CHESSBOOK_POLLINATIONS_JSON=object` ou `none` (o JSON é então extraído
+  da resposta, inclusive quando vem entre crases).
+* Para trocar de motor sem editar o `.env`: `--model openai/gpt-5.5`.
 
 ## O que é enviado
 
