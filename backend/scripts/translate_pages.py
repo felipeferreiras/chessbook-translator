@@ -15,16 +15,18 @@ from __future__ import annotations
 import argparse
 import html
 import json
+from itertools import groupby
 from pathlib import Path
 
 import pymupdf
 
 from app.pipeline.notation_pass import collect
+from app.pipeline.sections import assign_sections
 from app.translation.cache import TranslationCache
 from app.translation.config import load_env_file, model_warnings, provider_from_env
 from app.translation.glossary import Glossary
 from app.translation.provider import ConfigurationError
-from app.translation.service import SourceSegment, translate
+from app.translation.service import SourceSegment, TranslationRun, translate
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -67,6 +69,7 @@ def main() -> None:
     ap.add_argument("--provider")
     ap.add_argument("--model", help="substitui o modelo do .env (ex.: openai/gpt-5.5 na Pollinations)")
     ap.add_argument("--env-file", type=Path, default=ROOT / ".env")
+    ap.add_argument("--glossary", type=Path, help="glossário do projeto (JSON) que substitui/acrescenta termos")
     args = ap.parse_args()
     load_env_file(args.env_file)
     try:
@@ -80,15 +83,28 @@ def main() -> None:
     doc = pymupdf.open(args.pdf)
     notation = collect(doc)  # estilo e convenção detectados no livro inteiro
     wanted = set(parse_pages(args.pages))
-    regions = [r for r in notation.regions if r.page in wanted and r.role == "text"]
-    sources = [SourceSegment(f"p{r.page}-{i}", r.resolved.text, bold=tuple(r.main_mask), italic=tuple(r.italic_mask))
+    text_regions = [r for r in notation.regions if r.role == "text"]
+    # Seções do livro inteiro (o capítulo de uma página depende dos títulos anteriores).
+    section_of = dict(zip(map(id, text_regions), assign_sections(text_regions, notation.style,
+                                                                 doc.metadata.get("title", "")), strict=True))
+    regions = [r for r in text_regions if r.page in wanted]
+    sources = [SourceSegment(f"p{r.page}-{i}", r.resolved.text, kind="heading" if section_of[id(r)].heading_level
+                             else "paragraph", bold=tuple(r.main_mask), italic=tuple(r.italic_mask))
                for i, r in enumerate(regions)]
-    run = translate(sources, provider, Glossary.load(), section=doc.metadata.get("title", ""),
-                    style=notation.style, cache=TranslationCache(args.out / "cache.sqlite"))
+    glossary = Glossary.load(overrides=args.glossary)
+    cache = TranslationCache(args.out / "cache.sqlite")
+    run = TranslationRun([], [])
+    # Um lote nunca mistura seções: cada grupo vai com o próprio capítulo e subseção.
+    for label, group in groupby(zip(regions, sources, strict=True), key=lambda rs: section_of[id(rs[0])].label):
+        part = translate([src for _, src in group], provider, glossary, section=label, style=notation.style,
+                         cache=cache)
+        run.results.extend(part.results)
+        run.calls.extend(part.calls)
 
     rows = []
     for region, res in zip(regions, run.results, strict=True):
-        rows.append({"page": region.page, "id": res.id, "source": res.source, "masked": res.masked,
+        rows.append({"page": region.page, "id": res.id, "section": section_of[id(region)].label,
+                     "source": res.source, "masked": res.masked,
                      "text": res.text, "raw_translation": res.raw_translation, "status": res.status.value,
                      "problems": res.problems, "warnings": res.warnings, "provider": res.provider, "model": res.model})
     summary = {
