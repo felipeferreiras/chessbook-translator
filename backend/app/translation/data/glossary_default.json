@@ -7,12 +7,18 @@
         "jogada"
       ],
       "context": "no xadrez, 'move' é 'lance'; 'movimento' só para deslocamento físico de peça",
-      "category": "geral"
+      "category": "geral",
+      "avoid": [
+        "movimento"
+      ]
     },
     {
       "term": "waiting move",
       "preferred": "lance de espera",
-      "category": "finais"
+      "category": "finais",
+      "avoid": [
+        "movimento de espera"
+      ]
     },
     {
       "term": "opening",
@@ -31,7 +37,10 @@
         "final de partida"
       ],
       "context": "fase da partida; 'endgame manual' = manual de finais",
-      "category": "fase"
+      "category": "fase",
+      "avoid": [
+        "jogo final"
+      ]
     },
     {
       "term": "ending",
@@ -103,13 +112,19 @@
     {
       "term": "deflection",
       "preferred": "desvio",
-      "category": "tática"
+      "category": "tática",
+      "avoid": [
+        "atração"
+      ]
     },
     {
       "term": "decoy",
       "preferred": "atração",
       "context": "conforme o contexto",
-      "category": "tática"
+      "category": "tática",
+      "avoid": [
+        "desvio"
+      ]
     },
     {
       "term": "discovered attack",
@@ -119,7 +134,10 @@
     {
       "term": "passed pawn",
       "preferred": "peão passado",
-      "category": "peões"
+      "category": "peões",
+      "avoid": [
+        "peão passante"
+      ]
     },
     {
       "term": "isolated pawn",
@@ -185,7 +203,8 @@
       "term": "the square",
       "preferred": "o quadrado",
       "context": "regra do quadrado do peão",
-      "category": "finais"
+      "category": "finais",
+      "check": false
     },
     {
       "term": "stalemate",
@@ -208,19 +227,22 @@
       "term": "Tragicomedies",
       "preferred": "Tragicomédias",
       "context": "título de seção do livro",
-      "category": "editorial"
+      "category": "editorial",
+      "case_sensitive": true
     },
     {
       "term": "White",
       "preferred": "as brancas",
       "context": "lado no xadrez; concordância no plural ('as brancas jogam')",
-      "category": "lados"
+      "category": "lados",
+      "case_sensitive": true
     },
     {
       "term": "Black",
       "preferred": "as pretas",
       "context": "lado no xadrez; concordância no plural",
-      "category": "lados"
+      "category": "lados",
+      "case_sensitive": true
     },
     {
       "term": "rook pawn",
@@ -244,7 +266,10 @@
       "term": "resigned",
       "preferred": "abandonou",
       "context": "'Black resigned' = as pretas abandonaram",
-      "category": "resultado"
+      "category": "resultado",
+      "alternatives": [
+        "abandonar"
+      ]
     }
   ]
 }

@@ -143,3 +143,22 @@ def test_cached_translation_failing_current_rules_is_resent():
     run = translate([SourceSegment("i", text)], good, GLOSSARY, cache=cache)
     assert len(good.calls) == 1 and run.results[0].status == SegmentStatus.TRANSLATED
     assert run.results[0].text == "desvio: 2-29, 5-15 xeques diagonais: 12-33"
+
+
+def test_glossary_check_flags_avoided_translation_and_cache_follows_the_glossary(tmp_path):
+    from app.translation.cache import TranslationCache
+    from app.translation.glossary import Glossary, GlossaryEntry
+    from app.translation.prompt import cache_key, system_prompt
+    from app.translation.provider import Segment
+
+    g = Glossary([GlossaryEntry("deflection", "desvio", avoid=["atração"]), GlossaryEntry("outpost", "posto avançado")])
+    assert g.check("The deflection 1.Qd8 wins.", "A atração 1.Qd8 vence.") == [
+        "glossario_evitar: 'deflection' traduzido como 'atração' (preferido: 'desvio')"]
+    assert g.check("The deflection wins.", "O desvio vence.") == []
+    seg = Segment("p1", "The deflection wins.")
+    other = Glossary([GlossaryEntry("deflection", "desvio"), GlossaryEntry("outpost", "posto")])
+    same_term = Glossary([GlossaryEntry("deflection", "desvio", avoid=["atração"]), GlossaryEntry("outpost", "posto")])
+    key = cache_key("p", "m", system_prompt(), seg, "", g)
+    assert key != cache_key("p", "m", system_prompt(), seg, "", other)  # termo do segmento mudou
+    assert key == cache_key("p", "m", system_prompt(), seg, "", same_term)  # só mudou termo ausente
+    assert TranslationCache(tmp_path / "c.sqlite").get(key) is None

@@ -13,7 +13,7 @@ import json
 from .glossary import Glossary
 from .provider import Segment, TranslationRequest
 
-PROMPT_VERSION = "2026-10-23.2"
+PROMPT_VERSION = "2026-10-24.1"
 
 _RULES = """\
 Você é tradutor técnico especializado em literatura de xadrez. Traduza do inglês
@@ -38,8 +38,10 @@ Regras obrigatórias:
    "zt" → "torneio zonal", "izt" → "interzonal".
 6. "White"/"Black" como lados são "as brancas"/"as pretas" (concordância no
    plural). "diagram" é "diagrama".
-7. Use o glossário como preferência, considerando o contexto de cada ocorrência;
-   não é substituição cega.
+7. O campo "glossary" traz os termos que aparecem neste lote, com a tradução
+   preferencial, alternativas aceitas e traduções a nunca usar. Use-o como
+   preferência, considerando o contexto de cada ocorrência; não é substituição
+   cega.
 8. O campo "context_before" é só contexto: não o traduza nem o inclua na saída.
 9. Quebras de linha ("\n") dentro de um segmento separam itens de lista,
    entradas de índice ou de sumário: preserve-as nos mesmos pontos.
@@ -51,13 +53,20 @@ Regras obrigatórias:
 """
 
 
-def system_prompt(glossary: Glossary) -> str:
-    return _RULES + "\nGlossário (termo → tradução preferencial):\n" + "\n".join(glossary.as_prompt_lines()) + "\n"
+def system_prompt(glossary: Glossary | None = None) -> str:
+    """Instruções fixas: o glossário vai por lote (``build_request``), só com os termos presentes."""
+    return _RULES
+
+
+def glossary_for(segments: list[Segment], glossary: Glossary) -> list[str]:
+    text = "\n".join(s.text for s in segments)
+    return Glossary.prompt_lines(glossary.relevant(text))
 
 
 def build_request(segments: list[Segment], glossary: Glossary, section: str = "") -> TranslationRequest:
     payload = {
         "section": section,
+        "glossary": glossary_for(segments, glossary),
         "segments": [
             {"id": s.id, "kind": s.kind, "text": s.text, **({"context_before": s.context_before} if s.context_before else {})}
             for s in segments
@@ -70,9 +79,13 @@ def build_request(segments: list[Segment], glossary: Glossary, section: str = ""
     )
 
 
-def cache_key(provider: str, model: str, system: str, segment: Segment, section: str) -> str:
+def cache_key(provider: str, model: str, system: str, segment: Segment, section: str,
+              glossary: Glossary | None = None) -> str:
+    """Inclui os termos do glossário do segmento: mudar um termo invalida só quem o usa."""
+    terms = "\n".join(glossary_for([segment], glossary)) if glossary is not None else ""
     h = hashlib.sha256()
-    for part in (PROMPT_VERSION, provider, model, system, section, segment.kind, segment.context_before, segment.text):
+    for part in (PROMPT_VERSION, provider, model, system, section, segment.kind, segment.context_before, segment.text,
+                 terms):
         h.update(part.encode("utf-8"))
         h.update(b"\x00")
     return h.hexdigest()

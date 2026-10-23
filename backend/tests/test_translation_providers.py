@@ -49,8 +49,11 @@ class Recorder:
 def test_prompt_contains_rules_glossary_and_masked_segments():
     req = request()
     assert "⟦1⟧" in req.system_prompt and "Não resuma" in req.system_prompt
-    assert "zugzwang → zugzwang" in req.system_prompt and "queenside → ala da dama" in req.system_prompt
     payload = json.loads(req.user_payload)
+    # Glossário por lote: só os termos presentes nos segmentos, fora das instruções fixas.
+    assert "zugzwang → zugzwang" not in req.system_prompt
+    assert any(line.startswith("- zugzwang → zugzwang") for line in payload["glossary"])
+    assert not any("queenside" in line for line in payload["glossary"])
     assert payload["section"] == "Chapter 1" and [s["id"] for s in payload["segments"]] == ["p1", "p2"]
     assert "♔" not in req.user_payload  # o provedor só recebe texto mascarado
 
@@ -60,6 +63,8 @@ def test_glossary_relevance_is_word_based():
     terms = [e.term for e in g.relevant("The exchange on the queenside; a passed pawn.")]
     assert {"exchange", "queenside", "passed pawn"} <= set(terms)
     assert "draw" not in [e.term for e in g.relevant("withdrawal")]
+    assert {"outpost", "draw"} <= {e.term for e in g.relevant("Two outposts; the game was drawn.")}
+    assert "White" not in [e.term for e in g.relevant("a white pawn")]  # lado só com maiúscula
 
 
 # --- Anthropic ---------------------------------------------------------------

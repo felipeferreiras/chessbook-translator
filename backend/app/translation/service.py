@@ -141,9 +141,9 @@ def translate(
             results[src.id] = base
             continue
         if cache is not None:
-            hit = cache.get(cache_key(provider.name, provider.model, system, seg, section))
+            hit = cache.get(cache_key(provider.name, provider.model, system, seg, section, glossary))
             # Uma tradução em cache que não passa nas regras atuais é reenviada.
-            if hit is not None and _accept(base, hit, prot, SegmentStatus.CACHED, provider):
+            if hit is not None and _accept(base, hit, prot, SegmentStatus.CACHED, provider, glossary):
                 results[src.id] = base
                 continue
             base = SegmentResult(src.id, src.text, prot.masked, SegmentStatus.NOT_NEEDED)
@@ -189,10 +189,10 @@ def translate(
             if got is None or seg.id not in got:
                 retry_single.append(seg)
                 continue
-            if not _accept(res, got[seg.id], protected[seg.id], SegmentStatus.TRANSLATED, provider):
+            if not _accept(res, got[seg.id], protected[seg.id], SegmentStatus.TRANSLATED, provider, glossary):
                 retry_single.append(seg)
             elif cache is not None:
-                cache.put(cache_key(provider.name, provider.model, system, seg, section),
+                cache.put(cache_key(provider.name, provider.model, system, seg, section, glossary),
                           provider.name, provider.model, got[seg.id])
 
     for seg in retry_single:
@@ -204,17 +204,17 @@ def translate(
             res.status = SegmentStatus.FAILED
             res.problems.append("o provedor não devolveu tradução para este segmento")
             continue
-        if _accept(res, got[seg.id], protected[seg.id], SegmentStatus.TRANSLATED, provider):
+        if _accept(res, got[seg.id], protected[seg.id], SegmentStatus.TRANSLATED, provider, glossary):
             res.warnings.append("aceito na segunda tentativa")
             if cache is not None:
-                cache.put(cache_key(provider.name, provider.model, system, seg, section),
+                cache.put(cache_key(provider.name, provider.model, system, seg, section, glossary),
                           provider.name, provider.model, got[seg.id])
 
     return TranslationRun([results[s.id] for s in sources], calls)
 
 
 def _accept(res: SegmentResult, masked_translation: str, prot: Protected, ok_status: SegmentStatus,
-            provider: TranslationProvider) -> bool:
+            provider: TranslationProvider, glossary: Glossary | None = None) -> bool:
     res.raw_translation = masked_translation
     try:
         restored = restore(masked_translation, prot)
@@ -223,6 +223,8 @@ def _accept(res: SegmentResult, masked_translation: str, prot: Protected, ok_sta
         return False
     res.status, res.text, res.problems = ok_status, restored.text, []
     res.warnings = list(restored.warnings)
+    if glossary is not None:
+        res.warnings += glossary.check(prot.original, restored.text)
     ratio = len(restored.text) / max(1, len(prot.original))
     lo, hi = LENGTH_RATIO_RANGE
     if not lo <= ratio <= hi:
