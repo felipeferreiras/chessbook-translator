@@ -2,6 +2,7 @@
 
 import pytest
 
+from app.chess.notation.lexer import LexStyle
 from app.translation.guard import GuardViolation, protect, restore
 
 EN = "1.e4 e5 2.♘f3 ♘c6 3.♗b5 a6 This is the main line. The knight on f3 controls e5."
@@ -141,3 +142,16 @@ def test_malformed_tags_block_and_lost_tags_warn():
         restore("<strong>barreira:</strong> 2-11 e mais", p)
     out = restore("barreira: 2-11 e mais", p)
     assert any("negrito" in w for w in out.warnings) and out.styles == []
+
+
+def test_prose_leaving_a_parenthesis_with_notation_blocks():
+    """Caso real: "(5 Rd7+! is threatened)" virou "Ameaça-se 1 Ra5 ... (5 Rd7+!)"."""
+    style = LexStyle(numbers_without_dot=True, abbreviated_pawn_captures=True)
+    p = protect("1 ♖a5 ♖c7 2 ♖d5 (3 ♖d7+! is threatened) 2...♔e7 3 e6", style)
+    assert p.masked == "⟦1⟧ (⟦2⟧ is threatened) ⟦3⟧"
+    with pytest.raises(GuardViolation, match="parênteses"):
+        restore("Ameaça-se ⟦1⟧ (⟦2⟧) ⟦3⟧", p)
+    ok = restore("⟦1⟧ (ameaça-se ⟦2⟧) ⟦3⟧", p)
+    assert "(ameaça-se 3 ♖d7+!)" in ok.text
+    q = protect("1 ♔e2 (1 ♔f2 and 2 ♔e3) 1...♔d7", style)
+    assert restore(q.masked.replace(" and ", " e "), q).warnings == []  # "e" de uma letra é prosa

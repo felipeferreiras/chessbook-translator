@@ -226,3 +226,25 @@ def test_piece_route_is_notation_but_not_a_move():
     assert r.moves == []
     from app.translation.guard import protect
     assert "♔" not in protect(text, BOOK).masked
+
+
+ABBREV = LexStyle(numbers_without_dot=True, abbreviated_pawn_captures=True)
+
+
+def _abbreviated(text: str) -> list[str]:
+    return [a.text.rstrip("?!") for a in lex(text, ABBREV).atoms if a.move and a.move.to_file is not None]
+
+
+def test_abbreviated_capture_needs_notation_right_before_it():
+    """Em português "de" é preposição: "em vista de 1...♔a7" não tem captura d×e."""
+    assert _abbreviated("é um erro, em vista de 1...♔a7! e as brancas") == []
+    assert _abbreviated("Depois de 21 ♔f1 ♔f3 o rei marcha") == []
+    assert _abbreviated("3 ♔f1 d5 4 ed e4 5 d6") == ["ed"]
+    assert _abbreviated("9 ♔g6 hg 10 ♔×g7") == ["hg"]
+    assert _abbreviated("8...♖a5+! (8...hg? 9 ♔g6)") == ["hg"]
+
+
+def test_prose_parenthesis_with_de_is_not_notation():
+    kinds = [a.kind for a in lex("13 ♘f4 (conhecemos esta posição de empate) 13...♔c3!?", ABBREV).atoms]
+    assert AtomKind.PAREN_OPEN not in kinds and AtomKind.VAR_OPEN not in kinds
+    assert _abbreviated("(hg 9 ♔g6)") == ["hg"]

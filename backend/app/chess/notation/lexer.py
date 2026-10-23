@@ -391,9 +391,30 @@ def _group_spans(text: str, atoms: list[Atom]) -> list[Span]:
     return spans
 
 
+def _drop_prose_abbreviations(text: str, atoms: list[Atom]) -> list[Atom]:
+    """Captura abreviada ("hg") só é lance logo depois de outra notação.
+
+    Vale depois de número de lance, reticências, outro lance ou "(": "4 hg",
+    "♔g6 hg", "(hg 9 ♔g6)". Em português, "de" vem depois de prosa ("em vista
+    de 1...♔a7"). Roda antes dos parênteses: um "de" dentro de um parêntese de
+    prosa não pode fazê-lo parecer notação.
+    """
+    out: list[Atom] = []
+    for atom in sorted(atoms, key=lambda a: a.start):
+        if atom.kind == AtomKind.MOVE and atom.move and atom.move.to_file is not None:
+            prev = out[-1] if out else None
+            after_notation = (prev is not None and prev.kind in (AtomKind.MOVE_NUMBER, AtomKind.ELLIPSIS, AtomKind.MOVE)
+                              and not text[prev.end:atom.start].strip())
+            if not after_notation and not text[:atom.start].rstrip().endswith("("):
+                continue
+        out.append(atom)
+    return out
+
+
 def lex(text: str, style: LexStyle = DEFAULT_STYLE) -> LexResult:
     """Separa a notação da prosa, preservando as posições originais."""
     atoms = _attach_after_number(text, _raw_atoms(text, style), style)
+    atoms = _drop_prose_abbreviations(text, atoms)
     atoms = _variation_parens(text, atoms)
     spans = _group_spans(text, atoms)
 

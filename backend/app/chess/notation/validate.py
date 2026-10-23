@@ -50,6 +50,7 @@ REVIEW_WARNINGS = frozenset({
     "capture_marker_without_capture",
     "capture_without_marker",
     "check_marker_without_check",
+    "missing_check_marker",  # o livro sempre marca xeque; sem "+", a posição suposta deve estar errada
     "mate_marker_without_mate",
     "en_passant_marker_mismatch",
     "side_to_move_mismatch",

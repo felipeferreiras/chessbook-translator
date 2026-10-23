@@ -110,6 +110,7 @@ class PageReport:
     diagram_changed_pct: list[float]
     font_substitutions: list[str]
     overlaps: list[str] = field(default_factory=list)  # pares de blocos escritos um sobre o outro
+    shading_removed: int = 0  # fundos sombreados retirados (decisão do usuário, 2026-10-23)
 
     @property
     def ok(self) -> bool:
@@ -242,6 +243,35 @@ def _single_line_area(base: pymupdf.Rect, column: tuple[float, float] | None, ar
     return out, False
 
 
+def _is_shading(drawing: dict) -> bool:
+    """Retângulo só preenchido, em cinza claro (fundo de destaque do livro)."""
+    fill = drawing.get("fill")
+    if drawing.get("type") != "f" or not fill or drawing.get("color"):
+        return False
+    return 0.6 <= min(fill) and max(fill) <= 0.97 and max(fill) - min(fill) < 0.05
+
+
+def remove_shading(page: pymupdf.Page, boards: list[pymupdf.Rect]) -> int:
+    """Retira os fundos cinza da página, sem tocar em texto, imagens nem tabuleiros.
+
+    Quando a tradução desloca o texto, o fundo original não acompanha; o
+    usuário decidiu que a versão traduzida pode ficar sem esses fundos. Só são
+    removidos os vetores que tocam o centro de cada fundo ("totalmente
+    coberto" falhava por imprecisão nas bordas: 2 de 18 fundos numa página).
+    """
+    areas = [pymupdf.Rect(d["rect"]) for d in page.get_drawings() if _is_shading(d)]
+    areas = [r for r in areas if not any(r.intersects(b) for b in boards)]
+    for rect in areas:
+        cx, cy = (rect.x0 + rect.x1) / 2, (rect.y0 + rect.y1) / 2
+        dot = pymupdf.Rect(cx - 0.25, cy - 0.25, cx + 0.25, cy + 0.25) & rect
+        page.add_redact_annot(dot, fill=False, cross_out=False)
+    if areas:
+        page.apply_redactions(images=pymupdf.PDF_REDACT_IMAGE_NONE,
+                              graphics=pymupdf.PDF_REDACT_LINE_ART_REMOVE_IF_TOUCHED,
+                              text=pymupdf.PDF_REDACT_TEXT_NONE)
+    return len(areas)
+
+
 def away_from(rect: pymupdf.Rect, boards: list[pymupdf.Rect], margin: float = 0.3) -> pymupdf.Rect:
     """Recorta a área de redação para fora dos tabuleiros.
 
@@ -367,6 +397,7 @@ def compose_page(page: pymupdf.Page, original: pymupdf.Page, jobs: list[BlockJob
                  boards: list[pymupdf.Rect], keep: list[pymupdf.Rect], page_number: int) -> PageReport:
     """Substitui o texto dos ``jobs`` pela tradução. ``keep``: caixas que ficam (notação, rótulos)."""
     archive, font_css = _archive()
+    shading = remove_shading(page, boards)
     redacted: dict[str, list[pymupdf.Rect]] = {}
     for job in jobs:
         for r in job.layout.span_rects:
@@ -432,7 +463,7 @@ def compose_page(page: pymupdf.Page, original: pymupdf.Page, jobs: list[BlockJob
         page=page_number, blocks=outcomes,
         missing_text=[], missing_notation=[], leftover_original=leftovers,
         diagram_changed_pct=[_pixel_change(original, page, b) for b in boards],
-        font_substitutions=sorted(substitutions), overlaps=_overlaps(outcomes),
+        font_substitutions=sorted(substitutions), overlaps=_overlaps(outcomes), shading_removed=shading,
     )
 
 

@@ -12,6 +12,7 @@ um documento novo. Saídas (fora do repositório): ``traduzido.pdf``,
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from collections import Counter
 from pathlib import Path
@@ -24,6 +25,17 @@ from app.pipeline.notation_pass import collect
 from app.translation.guard import protect, restore
 
 ACCEPTED = {"translated", "cached"}
+
+
+def _runs(mask: list[bool], offset: int) -> list[tuple[int, int]]:
+    """Trechos contíguos marcados de ``mask``, deslocados por ``offset``."""
+    out: list[tuple[int, int]] = []
+    for i, on in enumerate(mask):
+        if on and out and out[-1][1] == offset + i:
+            out[-1] = (out[-1][0], offset + i + 1)
+        elif on:
+            out.append((offset + i, offset + i + 1))
+    return out
 
 
 def side_by_side(original: pymupdf.Page, translated: pymupdf.Page, path: Path, dpi: int = 80) -> None:
@@ -51,6 +63,7 @@ def main() -> None:
     by_id = {s["id"]: s for s in data["segments"]}
 
     source_bytes = args.pdf.read_bytes()
+    sha_before = hashlib.sha256(source_bytes).hexdigest()
     original = pymupdf.open(stream=source_bytes, filetype="pdf")
     notation = collect(original)
     regions = [r for r in notation.regions if r.page in set(pages) and r.role == "text"]
@@ -83,11 +96,11 @@ def main() -> None:
             if restored.text != seg["text"]:
                 raise SystemExit(f"{rid}: restauração diverge do resultado salvo")
             bold = [(a, b) for a, b, tag in restored.styles if tag == "b"]
-            for start, end, key in restored.pieces:  # linha principal: negrito na notação
-                a, b = prot.slot_ranges[key]
-                mask = region.main_mask[a:b]
-                if mask and sum(mask) > len(mask) / 2:
-                    bold.append((start, end))
+            for start, end, key in restored.pieces:
+                # Linha principal em negrito, variantes não: o trecho volta byte a
+                # byte, então o negrito é copiado caractere a caractere do original.
+                a, _ = prot.slot_ranges[key]
+                bold.extend(_runs(region.main_mask[a:a + end - start], start))
             italic = [(a, b) for a, b, tag in restored.styles if tag == "i"]
             slots[rid] = list(prot.slots.values())
             jobs.append(BlockJob(rid, region.layout, region.column, restored.text, sorted(bold),
@@ -101,6 +114,8 @@ def main() -> None:
     out.subset_fonts()
     out.save(args.out / "traduzido.pdf", garbage=3, deflate=True)
     summary = {
+        "source_sha256_before": sha_before,
+        "source_sha256_after": hashlib.sha256(args.pdf.read_bytes()).hexdigest(),
         "pages": pages,
         "segments_by_status": dict(status_count),
         "blocks": sum(len(r.blocks) for r in reports),
@@ -112,6 +127,7 @@ def main() -> None:
         "missing_notation": [x for r in reports for x in r.missing_notation],
         "leftover_original": [x for r in reports for x in r.leftover_original],
         "overlaps": [x for r in reports for x in r.overlaps],
+        "shading_removed": sum(r.shading_removed for r in reports),
         "diagrams_checked": sum(len(r.diagram_changed_pct) for r in reports),
         "diagrams_changed": [(r.page, pct) for r in reports for pct in r.diagram_changed_pct if pct > 0],
         "font_substitutions": sorted({s for r in reports for s in r.font_substitutions}),

@@ -29,7 +29,7 @@ Requisitos: Python 3.12+, [uv](https://docs.astral.sh/uv/), fonte DejaVu Sans
 cd backend
 uv venv .venv
 uv pip install --python .venv/bin/python -e ".[dev,spike]"   # inclui os SDKs de Claude, OpenAI e Gemini
-.venv/bin/python -m pytest -q        # 195 testes
+.venv/bin/python -m pytest -q        # 199 testes
 .venv/bin/ruff check app tests scripts ../spikes
 ```
 
@@ -52,13 +52,15 @@ cd backend
 .venv/bin/python -m scripts.translate_pages LIVRO.pdf SAÍDA_TRAD --pages 13,21 --env-file ../.env
 # 2. montagem do PDF traduzido + relatório + imagens lado a lado
 .venv/bin/python -m scripts.assemble_pdf LIVRO.pdf SAÍDA_TRAD SAÍDA_PDF
+# 3. critérios P1–P11 (relê o PDF traduzido) + página de revisão poc.html
+.venv/bin/python -m scripts.poc_report LIVRO.pdf SAÍDA_TRAD SAÍDA_PDF
 ```
 
 Como a montagem funciona e o que ela verifica: `docs/research/07-montagem-pdf.md`.
 
 ## Documentação
 
-* `docs/research/` — ambiente, repositórios e licenças, spike de PDF, estratégia FAN, amostra, tradução, montagem do PDF
+* `docs/research/` — ambiente, repositórios e licenças, spike de PDF, estratégia FAN, amostra, tradução, montagem do PDF, relatório da POC
 * `docs/architecture/01-arquitetura.md` — módulos, IR, modelo de dados, pipeline, privacidade, riscos
 * `docs/architecture/02-traducao.md` — provedores, o que é enviado, garantias, custo
 * `docs/decisions/` — ADRs 0001–0006

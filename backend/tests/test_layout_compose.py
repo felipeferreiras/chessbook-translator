@@ -184,3 +184,20 @@ def test_block_html_tabular_keeps_bold_chapter_line():
     body, _ = block_html(job)
     assert "<td colspan=2><b>Capítulo 2 Cavalo contra Peões</b></td>" in body
     assert "<td><i>Rei</i> no Canto</td><td class=n>72</td>" in body
+
+
+def test_shading_is_removed_but_text_and_board_stay():
+    doc = page_with_board()
+    page = doc[0]
+    shade = pymupdf.Rect(72, 400, 300, 440)
+    page.draw_rect(shade, fill=(0.87, 0.87, 0.86), width=0)
+    page.insert_textbox(shade, "Notação: 1.e4 e5 fica.", fontsize=10)
+    page.draw_rect(pymupdf.Rect(BOARD.x0, BOARD.y0, BOARD.x0 + 20, BOARD.y0 + 20), fill=(0.8, 0.8, 0.8), width=0)
+    original = pymupdf.open()
+    original.insert_pdf(doc)
+    report = compose_page(page, original[0], [], [BOARD], [], 1)
+    assert report.shading_removed == 1
+    assert "1.e4 e5 fica" in page.get_text()
+    gray = page.get_pixmap(clip=pymupdf.Rect(250, 430, 299, 439), colorspace=pymupdf.csGRAY)
+    assert min(gray.samples) > 250  # sem o cinza do fundo
+    assert report.diagram_changed_pct == [0.0]

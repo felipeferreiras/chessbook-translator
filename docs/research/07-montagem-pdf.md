@@ -91,8 +91,9 @@ pouco de comprimento e o bloco que antes ficava a 81 % passou a caber.
 
 ## Limitações conhecidas
 
-* Fundos sombreados ficam na posição original; quando o fluxo desloca o texto,
-  o sombreado pode não acompanhar exatamente.
+* Fundos sombreados: por decisão do usuário (2026-10-23), são retirados da
+  versão traduzida (`remove_shading`); texto, imagens e tabuleiros não são
+  tocados e a verificação de diagramas continua em 0.
 * Blocos só de notação não são deslocados (mantêm a fonte figurina original);
   eles encerram uma sequência de fluxo.
 * Títulos em Century Gothic e Broadway aparecem em Liberation Sans.

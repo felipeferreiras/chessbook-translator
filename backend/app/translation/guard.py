@@ -74,7 +74,37 @@ def _groups(span, text: str) -> list[list]:
         if groups[-1] and "\n" in text[groups[-1][-1].end:atom.start]:
             groups.append([])
         groups[-1].append(atom)
-    return [g for g in groups if g and any(a.kind in _NOTATION_KINDS for a in g)]
+    out: list[list] = []
+    for group in groups:
+        out.extend(_split_unpaired(group))
+    return [g for g in out if g and any(a.kind in _NOTATION_KINDS for a in g)]
+
+
+def _split_unpaired(group: list) -> list[list]:
+    """Tira de um trecho os parênteses de variante sem par dentro dele.
+
+    Em "4 fe (5 Rd7+! is threatened) 4...Ke7" a prosa fica dentro do parêntese;
+    se "(" e ")" fossem para marcadores diferentes, o tradutor não veria o
+    parêntese e poderia levar a prosa para fora dele.
+    """
+    stack: list[int] = []
+    unpaired: set[int] = set()
+    for i, atom in enumerate(group):
+        if atom.kind == AtomKind.VAR_OPEN:
+            stack.append(i)
+        elif atom.kind == AtomKind.VAR_CLOSE:
+            if stack:
+                stack.pop()
+            else:
+                unpaired.add(i)
+    unpaired.update(stack)
+    parts: list[list] = [[]]
+    for i, atom in enumerate(group):
+        if i in unpaired:
+            parts.append([])
+        else:
+            parts[-1].append(atom)
+    return parts
 
 
 def _styled_prose(chunk: str, flags: list[tuple[bool, bool]], use: tuple[bool, bool], tags: Counter[str]) -> str:
@@ -187,6 +217,8 @@ def restore(translated: str, protected: Protected) -> Restored:
     for ch, name in (("\n", "quebras de linha"), ("\t", "tabulações")):
         if translated.count(ch) != protected.masked.count(ch):
             problems.append(f"{name} divergem: original={protected.masked.count(ch)} tradução={translated.count(ch)}")
+    if not problems and _paren_groups(translated) != _paren_groups(protected.masked):
+        problems.append("parênteses com notação mudaram: prosa ou lances entraram ou saíram deles")
     if not problems and "\n" in protected.masked:
         lines_src = [sorted(PLACEHOLDER_RE.findall(line)) for line in protected.masked.split("\n")]
         lines_out = [sorted(PLACEHOLDER_RE.findall(line)) for line in translated.split("\n")]
@@ -224,6 +256,26 @@ def restore(translated: str, protected: Protected) -> Restored:
             opened[m.group(2)] = length
     out.append(translated[cursor:])
     return Restored(text="".join(out), warnings=warnings, pieces=pieces, styles=sorted(styles))
+
+
+def _paren_groups(masked: str) -> Counter[tuple[tuple[str, ...], bool]]:
+    """Parênteses de prosa que contêm marcadores: (marcadores, tem prosa).
+
+    "(⟦2⟧ is threatened)" diz que o lance é uma ameaça; se a tradução levar a
+    prosa para fora ("Ameaça-se ⟦1⟧ (⟦2⟧)"), o sentido muda.
+    """
+    groups: Counter[tuple[tuple[str, ...], bool]] = Counter()
+    stack: list[int] = []
+    for i, ch in enumerate(masked):
+        if ch == "(":
+            stack.append(i)
+        elif ch == ")" and stack:
+            inner = masked[stack.pop() + 1:i]
+            keys = tuple(sorted(PLACEHOLDER_RE.findall(inner)))
+            if keys:
+                prose = TAG_RE.sub("", PLACEHOLDER_RE.sub(" ", inner))
+                groups[(keys, bool(re.search(r"[^\W\d_]", prose)))] += 1  # "e" também é prosa
+    return groups
 
 
 def _tag_problems(translated: str) -> list[str]:

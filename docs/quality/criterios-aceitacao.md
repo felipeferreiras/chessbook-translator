@@ -14,12 +14,13 @@ inspeção do usuário.
 | 1.4 | Estratégia de FAN para Unicode, fontes especiais e OCR | `docs/research/04-estrategia-fan.md` + fixtures + testes | ✅ (protótipo) |
 | 1.5 | Arquitetura, modelo de dados e pipeline | `docs/architecture/01-arquitetura.md`, ADRs | ✅ |
 | 1.6 | POC de 10–20 páginas definida | `docs/quality/poc.md` | ✅ |
-| 1.7 | Testes iniciais executados | `pytest`: 89 testes passando na Fase 1 (195 agora) | ✅ |
+| 1.7 | Testes iniciais executados | `pytest`: 89 testes passando na Fase 1 (199 agora) | ✅ |
 | 1.8 | Plano por prioridade | `docs/plano-execucao.md` | ✅ |
 
 ## Prova de conceito (Fase 2) — critérios de saída
 
-Medidos sobre a amostra definida em `poc.md`.
+Medidos sobre a amostra definida em `poc.md`. Resultado de 2026-10-23 em
+`docs/research/08-relatorio-poc.md`: P1–P8, P10 e P11 atendidos; P9 aguarda o usuário.
 
 | # | Critério | Métrica | Meta | Tipo |
 |---|---|---|---|---|
