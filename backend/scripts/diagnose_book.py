@@ -20,6 +20,7 @@ import pymupdf
 
 from app.chess.notation import MoveStatus
 from app.extraction.font_profiles import base_font_name
+from app.extraction.font_signals import FontGuess, font_signals
 from app.pipeline.notation_pass import collect, validate
 
 
@@ -97,6 +98,11 @@ def main() -> None:
         "fonts_by_pages": dict(fonts.most_common()),
         "style": {"numbers_without_dot": result.style.numbers_without_dot,
                   "abbreviated_pawn_captures": result.style.abbreviated_pawn_captures},
+        "fonts_needing_attention": [
+            {"font": f.name, "guess": f.guess.value, "type": f.subtype, "tounicode": f.has_tounicode,
+             "probe": f.probe, "reasons": f.reasons}
+            for f in font_signals(doc, pages) if f.guess != FontGuess.TEXT
+        ],
         "convention": result.convention.value,
         "evidence": result.evidence,
         "regions": len(result.regions),

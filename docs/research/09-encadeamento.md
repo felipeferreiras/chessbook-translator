@@ -1,4 +1,4 @@
-# Fase 3 — encadeamento de posições entre parágrafos e diagramas
+# Fase 3 — notação: encadeamento, figurinas de peão, PGN, probe e fontes
 
 Data: 2026-10-23. Medido no livro inteiro (*Dvoretsky's Endgame Manual*,
 441 páginas, 45.448 lances), antes e depois.
@@ -91,3 +91,28 @@ o contorno. Como ela torna ♗ e ♝ quase iguais, a margem de segurança da
 proposta passou a ser medida contra **outra peça**, não contra a mesma peça
 na outra cor. Erro restante: peão lido como bispo (silhuetas parecidas). A
 amostra é pequena; o resultado continua sendo proposta que o usuário confirma.
+
+## Sinais de fonte e fontes Type 3
+
+`app/extraction/font_signals.py` examina cada fonte (nome, tipo, presença de
+`ToUnicode`, caracteres na Área de Uso Privado, letras de peça em trechos
+curtos, linhas de 8+ caracteres típicas de tabuleiro) e diz **quais pedem
+mapa** e **como sondar**: `embedded` (TrueType/CFF incorporada com
+`ToUnicode`: glifo desenhado isolado) ou `page` (Type 3 ou sem `ToUnicode`:
+recorte da página). `scripts/diagnose_book.py` passou a listar essas fontes.
+No livro de amostra: as três Linares aparecem como perfis já confirmados; as
+dez de texto não pedem nada.
+
+Caracterização com uma fonte Type 3 sintética (`tests/fixtures/type3.py`,
+glifos desenhados por procedimento):
+
+| Caso | Texto extraído | Sinal | Probe |
+|---|---|---|---|
+| sem `ToUnicode` | letras da codificação ("Nf3") | `unknown_symbols` | página |
+| `ToUnicode` → figurinas | "♘f3", valida direto | texto (nenhum mapa) | — |
+| `ToUnicode` → letras | "Nf3" | `likely_figurine` | página |
+
+Para Type 3 não há arquivo de fonte a redesenhar (`embedded_glyph_font`
+devolve nada); só o recorte da página serve. Os desenhos toscos do teste
+recebem notas altas contra figurinas de referência (um triângulo parece um
+peão), o que reforça a regra: o probe propõe, o usuário confirma.
