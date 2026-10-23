@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 import pymupdf
 
 from app.chess.diagrams.font_diagram import DiagramReading, read_font_diagram, side_from_label
-from app.chess.notation import Context, Convention, RegionAnalysis, analyze_region
+from app.chess.notation import AtomKind, Context, Convention, MoveStatus, RegionAnalysis, analyze_region, lex
 from app.chess.notation.convention import detect_convention, detect_style
 from app.chess.notation.lexer import LexStyle
 from app.extraction.font_profiles import (
@@ -334,6 +334,26 @@ def collect(doc: pymupdf.Document, pages: range | None = None) -> DocumentNotati
     return result
 
 
+def _following_diagram(events: list[tuple[tuple, str, object]], pos: int, key: tuple, style: LexStyle) -> str | None:
+    """FEN do próximo diagrama na mesma página e coluna, se nenhum lance vier antes dele."""
+    for other_key, kind, item in events[pos + 1:]:
+        if other_key[:2] != key[:2]:
+            return None
+        if kind == "diagram":
+            return item.fen  # type: ignore[union-attr]
+        if any(a.kind == AtomKind.MOVE for a in lex(item.resolved.text, style).atoms):  # type: ignore[union-attr]
+            return None
+    return None
+
+
+def _count(analysis: RegionAnalysis, status: MoveStatus) -> int:
+    return sum(m.status == status for m in analysis.moves)
+
+
+def _score(analysis: RegionAnalysis) -> int:
+    return _count(analysis, MoveStatus.VALIDATED)
+
+
 def validate(result: DocumentNotation) -> None:
     """Valida os lances em ordem de leitura, reiniciando a posição a cada diagrama."""
     events: list[tuple[tuple, str, object]] = []
@@ -344,7 +364,7 @@ def validate(result: DocumentNotation) -> None:
         events.append(((d.page, 0 if d.bbox[0] < 255 else 1, d.bbox[1], 0), "diagram", d))
     events.sort(key=lambda e: e[0])
     ctx = Context.unknown()
-    for _, kind, item in events:
+    for pos, (key, kind, item) in enumerate(events):
         if kind == "diagram":
             fen = item.fen  # type: ignore[union-attr]
             ctx = Context.from_proposed_fen(fen) if fen else Context.unknown()
@@ -353,4 +373,16 @@ def validate(result: DocumentNotation) -> None:
         region.analysis = analyze_region(
             region.resolved.text, ctx, result.convention, style=result.style, main_mask=region.main_mask
         )
+        following = _following_diagram(events, pos, key, result.style)
+        if following is not None and region.analysis.moves:
+            # Texto antes do próprio diagrama ("1 ♔g3? ..." acima do diagrama 1-8):
+            # vale a posição do diagrama seguinte se ela explica melhor os lances.
+            alt = analyze_region(region.resolved.text, Context.from_proposed_fen(following), result.convention,
+                                 style=result.style, main_mask=region.main_mask)
+            if _score(alt) > _score(region.analysis) and _count(alt, MoveStatus.ILLEGAL) <= _count(
+                    region.analysis, MoveStatus.ILLEGAL):
+                for m in alt.moves:
+                    if m.status != MoveStatus.NO_CONTEXT:
+                        m.warnings.append("context_from_following_diagram")
+                region.analysis = alt
         ctx = region.analysis.end_context

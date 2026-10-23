@@ -18,7 +18,7 @@ mesmas páginas. Saídas (`poc.json`, `poc.html`) ficam fora do repositório.
 | P6 | Legenda junto do diagrama | objetiva | ✅ 49 legendas, nenhuma afastada mais de 10 pt |
 | P7 | Marcadores íntegros | objetiva | ✅ 0 traduções aceitas com violação |
 | P8 | Sem omissão (heurística) | heurística | 1 segmento com razão 0,79 (limite 0,8), listado para revisão |
-| P9 | Qualidade da tradução | humana | **pendente**: revisão do usuário em `poc.html` |
+| P9 | Qualidade da tradução | humana | ✅ aprovado pelo usuário em 2026-10-23 |
 | P10 | Layout | objetiva | ✅ 0 sobreposições, 0 fora da página, nenhuma redução > 15 % sem sinal |
 | P11 | Relatório | objetiva | ✅ este documento e `poc.json` |
 
