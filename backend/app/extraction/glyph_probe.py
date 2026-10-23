@@ -17,8 +17,10 @@ Duas formas de obter o glifo:
   ``ToUnicode`` da fonte incorporada e desenha cada glifo isolado. Preferível
   sempre que a fonte for TrueType extraível (caso de livros reais testados).
 
-Limitação conhecida: as referências usam fontes livres (DejaVu, FreeSerif).
-Desenhos de editoras diferem; por isso o resultado é proposta, não decisão.
+Limitação conhecida: as referências são as fontes livres instaladas que têm
+as 12 figurinas (DejaVu, FreeFont...). Desenhos de editoras diferem; por isso
+o resultado é proposta, não decisão. Peão e bispo têm silhuetas parecidas e
+ainda se confundem.
 """
 
 from __future__ import annotations
@@ -33,12 +35,10 @@ from pathlib import Path
 
 import numpy as np
 import pymupdf
-from PIL import Image
+from PIL import Image, ImageDraw
 
 REFERENCE_FONT = Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf")
-REFERENCE_FONTS = [
-    f for f in (REFERENCE_FONT, Path("/usr/share/fonts/truetype/freefont/FreeSerif.ttf")) if f.exists()
-]
+FONT_DIRS = (Path("/usr/share/fonts"), Path("/usr/local/share/fonts"))
 FIGURINE_REFS = "♔♕♖♗♘♚♛♜♝♞♙♟"
 LETTER_REFS = "KQRBNDTCPkqrbndtcp"
 CANDIDATE_CHARS = set("KQRBNDTCP") | set(FIGURINE_REFS)
@@ -93,20 +93,66 @@ def _render_text(text: str, fontfile: str | None = None, fontbuffer: bytes | Non
 
 
 @functools.cache
-def _references() -> dict[str, list[np.ndarray]]:
-    refs: dict[str, list[np.ndarray]] = {}
-    for font in REFERENCE_FONTS:
+def reference_fonts() -> tuple[Path, ...]:
+    """Fontes instaladas com as 12 figurinas: cada uma é um desenho de referência.
+
+    Medido no livro de amostra (12 glifos de peça confirmados pelo usuário):
+    2 referências acertam 10; todas as instaladas (13 no ambiente), 11.
+    """
+    found = []
+    for base in FONT_DIRS:
+        for path in sorted(base.rglob("*")) if base.exists() else []:
+            if path.suffix.lower() not in (".ttf", ".otf"):
+                continue
+            try:
+                font = pymupdf.Font(fontfile=str(path))
+            except Exception as exc:  # noqa: BLE001 - fonte ilegível: só não serve de referência
+                logging.getLogger(__name__).debug("fonte de referência ignorada: %s (%s)", path, exc)
+                continue
+            if all(font.has_glyph(ord(ch)) for ch in FIGURINE_REFS):
+                found.append(path)
+    return tuple(found) or ((REFERENCE_FONT,) if REFERENCE_FONT.exists() else ())
+
+
+def _silhouette(vec: np.ndarray) -> np.ndarray:
+    """O desenho com o interior preenchido: o contorno varia de editora para editora, a silhueta menos."""
+    ink = np.where(vec > 0.5, 0, 255).astype(np.uint8)
+    framed = Image.new("L", (ink.shape[1] + 2, ink.shape[0] + 2), 255)
+    framed.paste(Image.fromarray(ink), (1, 1))
+    ImageDraw.floodfill(framed, (0, 0), 128)  # o que o fundo externo alcança
+    return (np.asarray(framed)[1:-1, 1:-1] != 128).astype(np.float32)
+
+
+@functools.cache
+def _references() -> dict[str, list[tuple[np.ndarray, np.ndarray]]]:
+    refs: dict[str, list[tuple[np.ndarray, np.ndarray]]] = {}
+    for font in reference_fonts():
         for ch in FIGURINE_REFS + LETTER_REFS:
             vec = _render_text(ch, fontfile=str(font))
             if vec is not None:
-                refs.setdefault(ch, []).append(vec)
+                refs.setdefault(ch, []).append((vec, _silhouette(vec)))
     return refs
 
 
 def _classify(vec: np.ndarray) -> tuple[tuple[float, str], tuple[float, str]]:
+    """As duas referências mais parecidas: média da semelhança do contorno e da silhueta."""
     refs = _references()
-    scored = sorted(((max(_similarity(vec, r) for r in rs), ch) for ch, rs in refs.items()), reverse=True)
-    return scored[0], scored[1]
+    sil = _silhouette(vec)
+    scored = sorted(
+        ((max(0.5 * _similarity(vec, r) + 0.5 * _similarity(sil, rs) for r, rs in pairs), ch)
+         for ch, pairs in refs.items()),
+        reverse=True,
+    )
+    # A margem de segurança vale contra outra peça: ♗ e ♝ têm a mesma silhueta.
+    best = scored[0]
+    runner = next(sc for sc in scored[1:] if _piece_of(sc[1]) != _piece_of(best[1]))
+    return best, runner
+
+
+def _piece_of(ch: str) -> str:
+    """Mesma chave para a figurina branca e a preta da mesma peça."""
+    i = FIGURINE_REFS.find(ch)
+    return "KQRBNKQRBNPP"[i] if i >= 0 else ch
 
 
 def _similarity(a: np.ndarray, b: np.ndarray) -> float:

@@ -73,3 +73,21 @@ Na amostra traduzida, o P3 continua atendido com mais lances confirmados:
   com lances, 9.371 meios-lances, 242 interrompidos por perda de posição;
   o arquivo é relido pelo python-chess sem erros. A saída fica fora do
   repositório.
+
+## Probe de glifos com mais referências
+
+Medido nos 12 glifos de peça das duas fontes figurinas do livro, usando como
+gabarito o mapa confirmado pelo usuário:
+
+| Variante | Acertos |
+|---|---|
+| 2 fontes de referência, contorno (antes) | 10/12 |
+| 2 fontes, contorno + silhueta | 11/12 |
+| todas as instaladas com as 12 figurinas (13), contorno | 11/12 |
+| todas as instaladas, contorno + silhueta (adotada) | 11/12 |
+
+A silhueta (desenho com o interior preenchido) varia menos entre editoras que
+o contorno. Como ela torna ♗ e ♝ quase iguais, a margem de segurança da
+proposta passou a ser medida contra **outra peça**, não contra a mesma peça
+na outra cor. Erro restante: peão lido como bispo (silhuetas parecidas). A
+amostra é pequena; o resultado continua sendo proposta que o usuário confirma.

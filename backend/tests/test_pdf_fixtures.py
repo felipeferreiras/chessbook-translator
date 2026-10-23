@@ -92,3 +92,19 @@ def test_characterization_tesseract_corrupts_fan(tmp_path):
     validated = [m.atom.text for m in r.moves if m.status == MoveStatus.VALIDATED]
     assert validated == ["e4", "e5"]
     assert r.needs_review
+
+
+def test_glyph_probe_uses_every_installed_font_with_figurines():
+    from app.extraction.glyph_probe import reference_fonts
+
+    fonts = reference_fonts()
+    assert len(fonts) >= 2 and any("DejaVuSans" in f.name for f in fonts)
+
+
+def test_glyph_probe_margin_is_against_another_piece():
+    """♗ e ♝ têm a mesma silhueta: o segundo colocado tem de ser outra peça."""
+    from app.extraction.glyph_probe import _classify, _piece_of, _render_text
+
+    vec = _render_text("♗", fontfile="/usr/share/fonts/truetype/freefont/FreeSerif.ttf")
+    (s1, best), (s2, runner) = _classify(vec)
+    assert _piece_of(best) == "B" and _piece_of(runner) != "B" and s1 - s2 > 0.1
