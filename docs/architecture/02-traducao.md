@@ -1,9 +1,9 @@
 # Camada de tradução
 
-Estado: implementada e testada com provedor de teste e com respostas simuladas
-pelos tipos reais de cada SDK. **Ainda não foi feita nenhuma chamada real com
-sucesso.** Em 2026-10-23 a tentativa pela Pollinations falhou porque a política
-de rede do ambiente bloqueia `gen.pollinations.ai`. O primeiro uso
+Estado: implementada e testada. Primeira tradução real em 2026-10-23 com
+`openai/gpt-5.4-nano` pela Pollinations: 208 de 208 segmentos da amostra
+aceitos, notação 100 % restaurada (ver `docs/research/06-primeira-traducao.md`).
+Claude, ChatGPT e Gemini diretos ainda não foram chamados de verdade. O primeiro uso
 com chave deve começar por poucas páginas (ver "Primeiro uso").
 
 ## Provedores
@@ -82,10 +82,14 @@ Cada tradução só é aceita se:
 2. as casas citadas na prosa ("o cavalo em f3") forem as mesmas do original;
 3. os símbolos de avaliação fora da notação (△, ⊙, +−, ±…) forem os mesmos.
 
+4. os números da prosa (referências de diagrama, exercícios, anos) forem os
+   mesmos — regra que passou a bloquear depois que a primeira tradução real
+   inseriu um número a mais num índice.
+
 Se falhar, o segmento é reenviado sozinho uma vez; persistindo, fica
-`needs_review` com a saída bruta guardada. Avisos não bloqueantes: números da
-prosa diferentes, ordem dos marcadores alterada e razão de comprimento PT/EN
-fora de 0,7–1,8.
+`needs_review` com a saída bruta guardada. Traduções em cache que não passam
+nas regras atuais são reenviadas. Avisos não bloqueantes: ordem dos marcadores
+alterada e razão de comprimento PT/EN fora de 0,7–1,8.
 
 Parênteses de prosa ("(but not …)") ficam fora dos marcadores, visíveis para o
 tradutor; a notação é restaurada byte a byte, inclusive figurinas e símbolos.

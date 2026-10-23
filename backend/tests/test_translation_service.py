@@ -126,3 +126,20 @@ def test_length_ratio_warning():
     run = translate([SourceSegment("x", "A long paragraph about opposition and corresponding squares in endings.")],
                     prov, GLOSSARY)
     assert any("razão de comprimento" in w for w in run.results[0].warnings)
+
+
+def test_cached_translation_failing_current_rules_is_resent():
+    from app.translation.guard import protect
+    from app.translation.prompt import build_request, cache_key
+    from app.translation.provider import Segment
+
+    cache = TranslationCache()
+    text = "deflection: 2-29, 5-15 diagonal checks: 12-33"
+    seg = Segment("i", protect(text).masked)
+    system = build_request([], GLOSSARY).system_prompt
+    # Entrada gravada antes de a divergência de números passar a bloquear.
+    cache.put(cache_key("fake", "fake-1", system, seg, ""), "fake", "fake-1", "desvio: 2-29, 5-15, 2- xeques: 12-33")
+    good = FakeProvider(lambda s: s.replace("deflection", "desvio").replace("diagonal checks", "xeques diagonais"))
+    run = translate([SourceSegment("i", text)], good, GLOSSARY, cache=cache)
+    assert len(good.calls) == 1 and run.results[0].status == SegmentStatus.TRANSLATED
+    assert run.results[0].text == "desvio: 2-29, 5-15 xeques diagonais: 12-33"

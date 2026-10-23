@@ -48,10 +48,13 @@ def test_reordered_spans_produce_warning():
     assert out.text == "As brancas jogam 5.O-O rapidamente após 4.Ba4 Nf6."
 
 
-def test_number_mismatch_is_a_warning():
-    p = protect("See Chapter 5 after 1.e4 e5.")
-    out = restore("Veja o Capítulo 6 após ⟦1⟧.", p)
-    assert any("números" in w for w in out.warnings)
+def test_number_mismatch_is_rejected():
+    # Num índice, números são referências a diagramas: um "2-" a mais corrompe o livro.
+    p = protect("desperado: 9-46, 15-82 diagonal checks: 12-33")
+    with pytest.raises(GuardViolation, match="2: 0 → 1"):
+        restore("desperado: 9-46, 15-82, 2- xeques diagonais: 12-33", p)
+    with pytest.raises(GuardViolation, match="números"):
+        restore("Veja o Capítulo 6 após ⟦1⟧.", protect("See Chapter 5 after 1.e4 e5."))
 
 
 def test_prose_parentheses_stay_visible_to_the_translator():

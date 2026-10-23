@@ -1,0 +1,58 @@
+# Primeira tradução real: GPT-5.4 Nano pela Pollinations
+
+Data: 2026-10-23. Modelo `openai/gpt-5.4-nano` via `gen.pollinations.ai`
+(Chat Completions, saída em JSON Schema). Livro de amostra: as 16 páginas
+definidas em `05-amostra-dvoretsky.md`. Os textos traduzidos ficam fora do
+repositório; aqui só há métricas e a descrição dos problemas.
+
+## Números
+
+| Métrica | Valor |
+|---|---|
+| Segmentos | 295 (208 com prosa, 87 só notação, não enviados) |
+| Traduzidos e aceitos | 208 de 208 |
+| Rejeitados pela proteção de notação | 0 após nova tentativa (1 segmento precisou de uma) |
+| Falhas do provedor | 0 |
+| Chamadas | 14 lotes, cerca de 3 min |
+| Tokens (todas as rodadas) | 44.935 de entrada, 14.555 de saída |
+| Custo pelo preço do catálogo | ≈ 0,02 pollen no total; ≈ 0,0012 pollen por página |
+| Estimativa grosseira para 441 páginas | ≈ 0,5 pollen (páginas variam; não medido) |
+
+Preços lidos em `GET /text/models` em 2026-10-23: entrada 0,15, entrada em
+cache 0,015 e saída 0,9375 pollen por milhão de tokens.
+
+## O que a revisão encontrou
+
+Verificações automáticas: nenhum inglês residual detectado por lista de
+palavras; os 34 segmentos devolvidos idênticos ao original são cabeçalhos de
+partida (nomes de jogadores, cidades, anos), o que está correto.
+
+Leitura humana (página 21 inteira e casos sinalizados):
+
+* **Notação:** 100 % restaurada, inclusive figurinas, ⊙, △, +− e variantes.
+* **Qualidade geral:** prosa natural e fiel; termos como "casas minadas",
+  "zugzwang recíproco", "casas correspondentes" e "final de peões" corretos.
+* **Problemas pequenos:** nome de cidade traduzido ("Hamburgo"), contra a
+  regra; "movimento de espera" em vez de "lance de espera" (corrigido no
+  glossário); uma nuance acrescentada ("e ainda assim"); um singular virou
+  plural; pontuação dupla após anotação ("!.").
+* **Problema grave (corrigido na regra):** no índice (p. 438) o modelo inseriu
+  um número a mais entre as referências de diagrama. A divergência de números
+  era só um aviso e o segmento tinha sido aceito; agora **bloqueia** a
+  aceitação, e traduções em cache que não passam na regra atual são reenviadas.
+* **Problema não detectável automaticamente:** no mesmo índice, ao reenviar,
+  o modelo trocou "deflection" (desvio) por "atração", que é o termo de outra
+  técnica (*decoy*), e deixou o termo inglês entre parênteses. Em listas densas
+  de terminologia o modelo pequeno não seguiu o glossário.
+* **Sumário (p. 5):** o conteúdo foi traduzido, mas as tabulações viraram
+  espaços simples; a reconstrução do layout terá de tratar sumários como tabela.
+
+## Conclusões
+
+1. O fluxo funciona de ponta a ponta com um provedor real, e a proteção da
+   notação se comportou como projetado.
+2. O GPT-5.4 Nano é barato e bom para prosa, mas erra terminologia em listas e
+   índices. Vale comparar um modelo maior nas páginas 21 e 438 antes de
+   traduzir o livro inteiro.
+3. A revisão humana continua necessária para terminologia: nenhuma regra
+   automática distingue "desvio" de "atração".

@@ -11,7 +11,7 @@ uv venv .venv && uv pip install --python .venv/bin/python -e ".[dev,spike]"
 Requisitos do sistema: fonte DejaVu Sans (`fonts-dejavu-core`); Tesseract é
 opcional (o teste de OCR é pulado se não estiver instalado).
 
-## Suíte atual — 156 testes, todos passando em 2026-10-23
+## Suíte atual — 157 testes, todos passando em 2026-10-23
 
 | Arquivo | Cobre |
 |---|---|
@@ -31,8 +31,9 @@ posição presumida.
 
 ## Não coberto por testes automáticos
 
-* Chamadas reais aos provedores. Com a Pollinations, a chave está configurada
-  localmente, mas a rede do ambiente bloqueia `gen.pollinations.ai`. Os
+* Chamadas reais: feitas manualmente com a Pollinations (GPT-5.4 Nano) em
+  2026-10-23; Claude, ChatGPT e Gemini diretos ainda não. Testes com rede não
+  entram na suíte automática (custo e chave). Os
   testes verificam montagem do pedido e leitura da resposta com os tipos dos
   SDKs, mas só uma chamada real confirma que cada API aceita o pedido (por
   exemplo, saída estruturada combinada com `fallbacks` na Claude).

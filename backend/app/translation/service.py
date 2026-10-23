@@ -140,10 +140,11 @@ def translate(
             continue
         if cache is not None:
             hit = cache.get(cache_key(provider.name, provider.model, system, seg, section))
-            if hit is not None:
-                _accept(base, hit, prot, SegmentStatus.CACHED, provider)
+            # Uma tradução em cache que não passa nas regras atuais é reenviada.
+            if hit is not None and _accept(base, hit, prot, SegmentStatus.CACHED, provider):
                 results[src.id] = base
                 continue
+            base = SegmentResult(src.id, src.text, prot.masked, SegmentStatus.NOT_NEEDED)
         results[src.id] = base
         pending.append(seg)
 

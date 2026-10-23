@@ -10,7 +10,8 @@ conforto de uso**.
 | ◐ | 2a | Diagnóstico + extração para regiões em ordem de leitura + perfis de fonte + passagem de notação no livro de amostra (feito: `notation_pass`, `diagnose_book`); falta importação com cópia imutável e a IR persistida | — |
 | ◐ | 2b | Diagramas em fonte lidos e associados a rótulos (feito); falta diagramas vetoriais/imagem e ligação com soluções ("9/21") e referências ("diagram 1-1") | 2a |
 | ✅ | 2b' | Mapa de glifos Linares confirmado pelo usuário (2026-10-22) | 2a |
-| ◐ | 2d | Provedores Pollinations, Claude, ChatGPT e Gemini + `FakeProvider`, glossário, cache e revisão (feito); **falta a primeira execução real**: liberar `gen.pollinations.ai` na rede do ambiente e escolher um modelo de tradução | 2a |
+| ✅ | 2d | Provedores, glossário, cache e revisão; primeira tradução real da amostra com GPT-5.4 Nano (208/208 aceitos) | 2a |
+| **agora** | 2d' | Comparar um modelo maior nas páginas 21 e 438 (terminologia em índices) e decidir o modelo do livro | 2d |
 | 3 | 2c | Layout A com calibração, expansão e verificação de presença; fallback B por página | 2a, 2b |
 | 5 | 2e | Relatório P1–P11 e comparação lado a lado mínima; **avaliação da POC com o usuário** | 2a–2d |
 | 6 | 3 | Notação: probe de glifos com mais referências, sinais de fonte/`ToUnicode`, figurinas pretas, encadeamento entre parágrafos e diagramas, PGN por partida, testes com fontes Type 3 | 2e aprovada |

@@ -104,12 +104,20 @@ def restore(translated: str, protected: Protected) -> Restored:
         problems.append(
             f"símbolos de avaliação divergem: original={dict(protected.symbols)} tradução={dict(symbols)}"
         )
+    # Números da prosa são dados (diagramas 1-21, exercícios 1/6, páginas, anos):
+    # qualquer número a mais ou a menos bloqueia a aceitação.
+    numbers = Counter(NUMBER_RE.findall(prose))
+    if numbers != protected.numbers:
+        diff = {k: (protected.numbers.get(k, 0), numbers.get(k, 0))
+                for k in sorted(set(numbers) | set(protected.numbers), key=int)
+                if protected.numbers.get(k, 0) != numbers.get(k, 0)}
+        problems.append(
+            "números na prosa divergem (número: original → tradução): "
+            + ", ".join(f"{k}: {a} → {b}" for k, (a, b) in diff.items())
+        )
     if problems:
         raise GuardViolation(problems)
     warnings: list[str] = []
-    numbers = Counter(NUMBER_RE.findall(prose))
-    if numbers != protected.numbers:
-        warnings.append(f"números na prosa divergem: original={dict(protected.numbers)} tradução={dict(numbers)}")
     order = [int(k) for k in PLACEHOLDER_RE.findall(translated)]
     if order != sorted(order):
         warnings.append("ordem dos trechos de notação foi alterada pela tradução")
