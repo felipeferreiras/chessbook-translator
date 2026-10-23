@@ -29,7 +29,7 @@ Requisitos: Python 3.12+, [uv](https://docs.astral.sh/uv/), fonte DejaVu Sans
 cd backend
 uv venv .venv
 uv pip install --python .venv/bin/python -e ".[dev,spike]"   # inclui os SDKs de Claude, OpenAI e Gemini
-.venv/bin/python -m pytest -q        # 170 testes
+.venv/bin/python -m pytest -q        # 188 testes
 .venv/bin/ruff check app tests scripts ../spikes
 ```
 
@@ -43,12 +43,22 @@ Spike de estratégias de PDF (gera PDFs, PNGs e `results.json`):
 
 Configure `.env` a partir de `.env.example` (provedor, chave, modelo e
 `CHESSBOOK_PRIVACY_MODE=remote_allowed`) e veja `docs/architecture/02-traducao.md`.
-Primeira tradução real feita com GPT-5.4 Nano pela Pollinations
+Modelo escolhido: Gemini 3.8 Flash pela Pollinations
 (ver `docs/research/06-primeira-traducao.md`).
+
+```bash
+cd backend
+# 1. tradução das páginas (saída fora do repositório)
+.venv/bin/python -m scripts.translate_pages LIVRO.pdf SAÍDA_TRAD --pages 13,21 --env-file ../.env
+# 2. montagem do PDF traduzido + relatório + imagens lado a lado
+.venv/bin/python -m scripts.assemble_pdf LIVRO.pdf SAÍDA_TRAD SAÍDA_PDF
+```
+
+Como a montagem funciona e o que ela verifica: `docs/research/07-montagem-pdf.md`.
 
 ## Documentação
 
-* `docs/research/` — ambiente, repositórios e licenças, spike de PDF, estratégia FAN
+* `docs/research/` — ambiente, repositórios e licenças, spike de PDF, estratégia FAN, amostra, tradução, montagem do PDF
 * `docs/architecture/01-arquitetura.md` — módulos, IR, modelo de dados, pipeline, privacidade, riscos
 * `docs/architecture/02-traducao.md` — provedores, o que é enviado, garantias, custo
 * `docs/decisions/` — ADRs 0001–0006

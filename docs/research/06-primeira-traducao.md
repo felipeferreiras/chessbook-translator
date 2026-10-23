@@ -116,9 +116,11 @@ e natural, terminologia correta ("ruptura c5-c6", "casas correspondentes",
 "peão f passado"); "estão em correspondência" (melhor "são correspondentes").
 
 Os 40 segmentos devolvidos idênticos são nomes de jogadores, locais e anos e o
-índice onomástico. Decisão editorial pendente: manter nomes geográficos no
-original (comportamento atual, segue a regra 5 do prompt) ou usar a forma
-portuguesa ("Hamburgo", "Moscou", "Tchecoslováquia").
+índice onomástico. Decisão editorial do usuário (2026-10-23): usar a forma
+portuguesa consagrada de cidades, países e competições ("Hamburgo", "Moscou",
+"Tchecoslováquia") e abreviações portuguesas ("ol." , "camp."); a regra 5 do
+prompt foi alterada e a amostra traduzida de novo (208/208 aceitos, 12
+chamadas, 43.793 tokens de entrada e 40.666 de saída).
 
 O Gemini gera mais tokens de saída que de entrada (raciocínio cobrado como
 saída); a estimativa para o livro inteiro passa a ser ≈ 0,20 / 16 × 441 ≈

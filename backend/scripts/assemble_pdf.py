@@ -1,0 +1,128 @@
+"""Monta o PDF traduzido a partir do original e do resultado de ``translate_pages``.
+
+Uso (a partir de backend/):
+    .venv/bin/python -m scripts.assemble_pdf LIVRO.pdf TRADUÇÃO_DIR SAÍDA_DIR
+
+``TRADUÇÃO_DIR`` é o diretório gerado por ``translate_pages`` (com
+``resultado.json``). O original não é alterado: as páginas são copiadas para
+um documento novo. Saídas (fora do repositório): ``traduzido.pdf``,
+``relatorio.json`` e imagens lado a lado em ``paginas/``.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+from collections import Counter
+from pathlib import Path
+
+import pymupdf
+from PIL import Image
+
+from app.layout.compose import BlockJob, compose_page, verify_text
+from app.pipeline.notation_pass import collect
+from app.translation.guard import protect, restore
+
+ACCEPTED = {"translated", "cached"}
+
+
+def side_by_side(original: pymupdf.Page, translated: pymupdf.Page, path: Path, dpi: int = 80) -> None:
+    a = original.get_pixmap(dpi=dpi)
+    b = translated.get_pixmap(dpi=dpi)
+    ia = Image.frombytes("RGB", (a.width, a.height), a.samples)
+    ib = Image.frombytes("RGB", (b.width, b.height), b.samples)
+    canvas = Image.new("RGB", (ia.width + ib.width + 12, max(ia.height, ib.height)), "white")
+    canvas.paste(ia, (0, 0))
+    canvas.paste(ib, (ia.width + 12, 0))
+    canvas.save(path)
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("pdf", type=Path)
+    ap.add_argument("translation", type=Path)
+    ap.add_argument("out", type=Path)
+    args = ap.parse_args()
+    args.out.mkdir(parents=True, exist_ok=True)
+    (args.out / "paginas").mkdir(exist_ok=True)
+
+    data = json.loads((args.translation / "resultado.json").read_text(encoding="utf-8"))
+    pages = data["summary"]["pages"]
+    by_id = {s["id"]: s for s in data["segments"]}
+
+    source_bytes = args.pdf.read_bytes()
+    original = pymupdf.open(stream=source_bytes, filetype="pdf")
+    notation = collect(original)
+    regions = [r for r in notation.regions if r.page in set(pages) and r.role == "text"]
+    ids = [f"p{r.page}-{i}" for i, r in enumerate(regions)]
+    mismatched = [i for i, r in zip(ids, regions, strict=True) if by_id.get(i, {}).get("source") != r.resolved.text]
+    if mismatched:
+        raise SystemExit(f"o resultado da tradução não corresponde ao texto extraído: {mismatched[:5]}")
+
+    out = pymupdf.open()
+    for p in pages:
+        out.insert_pdf(original, from_page=p - 1, to_page=p - 1)
+
+    reports = []
+    status_count: Counter[str] = Counter()
+    for index, p in enumerate(pages):
+        page, orig_page = out[index], original[p - 1]
+        jobs: list[BlockJob] = []
+        keep: list[pymupdf.Rect] = []
+        slots: dict[str, list[str]] = {}
+        for rid, region in zip(ids, regions, strict=True):
+            if region.page != p or region.layout is None:
+                continue
+            seg = by_id[rid]
+            status_count[seg["status"]] += 1
+            if seg["status"] not in ACCEPTED or not seg["raw_translation"]:
+                keep.append(pymupdf.Rect(region.layout.text_rect))
+                continue
+            prot = protect(region.resolved.text, notation.style)
+            restored = restore(seg["raw_translation"], prot)
+            if restored.text != seg["text"]:
+                raise SystemExit(f"{rid}: restauração diverge do resultado salvo")
+            bold = []
+            for start, end, key in restored.pieces:
+                a, b = prot.slot_ranges[key]
+                mask = region.main_mask[a:b]
+                if mask and sum(mask) > len(mask) / 2:
+                    bold.append((start, end))
+            slots[rid] = list(prot.slots.values())
+            jobs.append(BlockJob(rid, region.layout, region.column, restored.text, bold,
+                                 tabular="\t" in region.resolved.text))
+        boards = [pymupdf.Rect(d.bbox) for d in notation.diagrams if d.page == p]
+        report = compose_page(page, orig_page, jobs, boards, keep, p)
+        verify_text(page, report, jobs, slots)
+        reports.append(report)
+        side_by_side(orig_page, page, args.out / "paginas" / f"p{p:03d}.png")
+
+    out.subset_fonts()
+    out.save(args.out / "traduzido.pdf", garbage=3, deflate=True)
+    summary = {
+        "pages": pages,
+        "segments_by_status": dict(status_count),
+        "blocks": sum(len(r.blocks) for r in reports),
+        "blocks_placed": sum(b.placed for r in reports for b in r.blocks),
+        "blocks_expanded": sum(b.expanded for r in reports for b in r.blocks),
+        "blocks_reduced": sum(b.placed and b.scale < 1 for r in reports for b in r.blocks),
+        "blocks_needing_review": [b.region_id for r in reports for b in r.blocks if b.needs_review],
+        "missing_text": [x for r in reports for x in r.missing_text],
+        "missing_notation": [x for r in reports for x in r.missing_notation],
+        "leftover_original": [x for r in reports for x in r.leftover_original],
+        "overlaps": [x for r in reports for x in r.overlaps],
+        "diagrams_checked": sum(len(r.diagram_changed_pct) for r in reports),
+        "diagrams_changed": [(r.page, pct) for r in reports for pct in r.diagram_changed_pct if pct > 0],
+        "font_substitutions": sorted({s for r in reports for s in r.font_substitutions}),
+        "pages_ok": [r.page for r in reports if r.ok],
+    }
+    detail = [{"page": r.page, "ok": r.ok, "blocks": [b.__dict__ for b in r.blocks], "missing_text": r.missing_text,
+               "missing_notation": r.missing_notation, "leftover_original": r.leftover_original, "overlaps": r.overlaps, "diagram_changed_pct": r.diagram_changed_pct,
+               "font_substitutions": r.font_substitutions} for r in reports]
+    (args.out / "relatorio.json").write_text(json.dumps({"summary": summary, "pages": detail}, ensure_ascii=False,
+                                                        indent=1, default=str), encoding="utf-8")
+    print(json.dumps(summary, ensure_ascii=False, indent=1))
+
+
+if __name__ == "__main__":
+    main()

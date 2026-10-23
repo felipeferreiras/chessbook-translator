@@ -65,3 +65,30 @@ def test_prose_parentheses_stay_visible_to_the_translator():
     assert p.masked == "he replies ⟦1⟧ (but not ⟦2⟧) ⟦3⟧, with a draw."
     out = restore("ele responde ⟦1⟧ (mas não ⟦2⟧) ⟦3⟧, com empate.", p)
     assert out.text == "ele responde 2 ♔e4 (mas não 2 ♔f6? ♔c4! 3 ♔e6 ♔c5−+) 2...♔c4 3 ♔e3, com empate."
+
+
+def test_restore_reports_where_each_notation_slot_landed():
+    p = protect("After 4.Ba4 Nf6 White plays 5.O-O quickly.")
+    out = restore("As brancas jogam ⟦2⟧ rapidamente após ⟦1⟧.", p)
+    for start, end, key in out.pieces:
+        assert out.text[start:end] == p.slots[key]
+        a, b = p.slot_ranges[key]
+        assert p.original[a:b] == p.slots[key]
+
+
+def test_lost_line_break_blocks():
+    p = protect("autopilot: 4-31, 4-33\nbarrier: 2-11")
+    with pytest.raises(GuardViolation, match="quebras de linha"):
+        restore("piloto automático: 4-31, 4-33 barreira: 2-11", p)
+    assert restore("piloto automático: 4-31, 4-33\nbarreira: 2-11", p).warnings == []
+
+
+def test_notation_moved_across_line_break_blocks():
+    """Caso real: "1 Bd1+!? Kh4??\n1... Kg6! was necessary" virou "Era necessário 1 Bd1+!?..."."""
+    p = protect("1.Bd1+!? Kh4??\n1...Kg6! was necessary, and Black resigned.")
+    keys = list(p.slots)
+    assert len(keys) == 2
+    with pytest.raises(GuardViolation, match="mudaram de linha"):
+        restore(f"⟦{keys[0]}⟧ ⟦{keys[1]}⟧\nera necessário, e as pretas abandonaram.", p)
+    ok = restore(f"⟦{keys[0]}⟧\n⟦{keys[1]}⟧ era necessário, e as pretas abandonaram.", p)
+    assert ok.text.startswith("1.Bd1+!? Kh4??\n1...Kg6! era")

@@ -30,9 +30,12 @@ def test_vocabulary_skips_word_cut_at_line_end():
     assert "posi" not in v and "this" in v
 
 
-def _block(lines):
-    return {"lines": [{"spans": [{"text": t, "font": "Times", "flags": f, "bbox": (0, 0, 1, 1)} for t, f in line]}
-                      for line in lines]}
+def _block(lines, widths=None):
+    widths = widths or [100] * len(lines)
+    return {"lines": [{"bbox": (0, 12 * i, w, 12 * i + 10),
+                       "spans": [{"text": t, "font": "Times", "flags": f, "bbox": (0, 12 * i, w, 12 * i + 10)}
+                                 for t, f in line]}
+                      for i, (line, w) in enumerate(zip(lines, widths, strict=True))]}
 
 
 def test_block_assembly_keeps_bold_aligned():
@@ -42,3 +45,18 @@ def test_block_assembly_keeps_bold_aligned():
     assert text == "Index: (9-158), the position 1 Kd4"
     assert len(bold) == len(text)
     assert bold[text.index("1 Kd4")] and not bold[text.index("position")]
+
+
+def test_short_line_becomes_hard_break():
+    # Entradas de índice: a primeira linha termina bem antes da margem direita.
+    block = _block([[("autopilot: 4-31, 4-33", 0)], [("bad bishop: 6-16 – 6-34, 6-40, 6-41, 7-38", 0)]],
+                   widths=[45, 100])
+    spans, bold, _, _ = _block_parts(block, VOCAB)
+    assert "".join(s.text for s in spans) == "autopilot: 4-31, 4-33\nbad bishop: 6-16 – 6-34, 6-40, 6-41, 7-38"
+    assert len(bold) == len("".join(s.text for s in spans))
+
+
+def test_full_lines_are_joined_with_space():
+    block = _block([[("The king goes to the", 0)], [("d6-square at once.", 0)]], widths=[100, 60])
+    spans, _, _, _ = _block_parts(block, VOCAB)
+    assert "".join(s.text for s in spans) == "The king goes to the d6-square at once."

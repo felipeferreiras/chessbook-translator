@@ -13,7 +13,7 @@ import json
 from .glossary import Glossary
 from .provider import Segment, TranslationRequest
 
-PROMPT_VERSION = "2026-10-22.1"
+PROMPT_VERSION = "2026-10-23.1"
 
 _RULES = """\
 Você é tradutor técnico especializado em literatura de xadrez. Traduza do inglês
@@ -29,14 +29,21 @@ Regras obrigatórias:
    diagrama (1-21), números de exercício (1/6), datas e anos.
 4. Preserve símbolos de avaliação e anotação (+−, −+, ±, ∓, ⩲, ⩱, =, ∞, ⊙, △, □,
    ⇆, !, ?, !!, ??, !?, ?!) exatamente como aparecem.
-5. Não traduza nomes de jogadores, de eventos, de cidades nem títulos de obras.
-   "Dvoretsky's Endgame Manual" permanece como está.
+5. Não traduza nomes de jogadores nem títulos de obras ("Dvoretsky's Endgame
+   Manual" permanece como está). Para cidades, países e competições, use a
+   forma portuguesa consagrada quando existir (Hamburg → Hamburgo, Moscow →
+   Moscou, Czechoslovakia → Tchecoslováquia, USSR → URSS); sem forma
+   consagrada, mantenha o original. Abreviações de competição: "ol" →
+   "ol." (Olimpíada), "ch" → "camp." (campeonato), "chsf" → "semif. camp.",
+   "zt" → "torneio zonal", "izt" → "interzonal".
 6. "White"/"Black" como lados são "as brancas"/"as pretas" (concordância no
    plural). "diagram" é "diagrama".
 7. Use o glossário como preferência, considerando o contexto de cada ocorrência;
    não é substituição cega.
 8. O campo "context_before" é só contexto: não o traduza nem o inclua na saída.
-9. Responda apenas com o JSON pedido: {"translations": [{"id": ..., "text": ...}]},
+9. Quebras de linha ("\n") dentro de um segmento separam itens de lista,
+   entradas de índice ou de sumário: preserve-as nos mesmos pontos.
+10. Responda apenas com o JSON pedido: {"translations": [{"id": ..., "text": ...}]},
    uma entrada por segmento, com o mesmo "id".
 """
 

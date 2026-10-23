@@ -29,6 +29,23 @@ from app.extraction.lines import vocabulary
 
 
 @dataclass
+class BlockLayout:
+    """Geometria e estilo de um bloco de texto, para a montagem do PDF."""
+
+    text_rect: tuple[float, float, float, float]  # caixa só do texto (sem tabuleiro)
+    span_rects: list[tuple[float, float, float, float]]  # o que será apagado
+    font: str
+    size: float
+    color: int
+    bold: bool  # bloco inteiro em negrito
+    italic: bool
+    align: str  # left | justify | center | right
+    indent: float  # recuo da primeira linha (pt)
+    line_height: float  # distância entre linhas (pt)
+    lines: int
+
+
+@dataclass
 class Region:
     page: int  # 1-based
     bbox: tuple[float, float, float, float]
@@ -37,6 +54,7 @@ class Region:
     main_mask: list[bool]
     analysis: RegionAnalysis | None = None
     role: str = "text"  # text | header | footer
+    layout: BlockLayout | None = None
 
 
 @dataclass
@@ -68,6 +86,26 @@ def _is_bold(span: dict) -> bool:
     return bool(span["flags"] & 16) or "Bold" in span["font"]
 
 
+def visual_rows(lines: list[dict], tolerance: float = 2.0) -> list[list[dict]]:
+    """Agrupa os objetos "linha" do PDF em linhas visuais.
+
+    Geradores como o Calibre posicionam cada palavra de uma linha justificada
+    como um objeto separado; juntá-los pela posição vertical recupera a linha
+    que o leitor vê.
+    """
+    rows: list[list[dict]] = []
+    for line in sorted(lines, key=lambda ln: ((ln["bbox"][1] + ln["bbox"][3]) / 2, ln["bbox"][0])):
+        mid = (line["bbox"][1] + line["bbox"][3]) / 2
+        if rows:
+            last = rows[-1]
+            last_mid = sum((ln["bbox"][1] + ln["bbox"][3]) / 2 for ln in last) / len(last)
+            if abs(mid - last_mid) <= tolerance:
+                last.append(line)
+                continue
+        rows.append([line])
+    return [sorted(r, key=lambda ln: ln["bbox"][0]) for r in rows]
+
+
 def _block_parts(
     block: dict, vocab: set[str] | None = None
 ) -> tuple[list[SpanText], list[bool], list[str], pymupdf.Rect]:
@@ -80,30 +118,73 @@ def _block_parts(
     bold: list[bool] = []
     diagram_lines: list[str] = []
     board_rect = pymupdf.Rect()
-    for line_no, line in enumerate(block["lines"]):
-        line_diagram = []
-        line_text: list[dict] = []
-        for span in line["spans"]:
-            prof = profile_for(span["font"])
-            if prof is not None and prof.role == FontRole.DIAGRAM:
-                line_diagram.append(span["text"])
-                board_rect |= pymupdf.Rect(span["bbox"])
-            else:
-                line_text.append(span)
-        if line_diagram:
-            diagram_lines.append("".join(line_diagram))
-        if line_text:
-            if spans and line_no > 0:
-                _join_previous(spans, bold, "".join(sp["text"] for sp in line_text).lstrip(), vocab or set())
-                line_text = [dict(line_text[0], text=line_text[0]["text"].lstrip())] + line_text[1:]
-            for span in line_text:
-                spans.append(SpanText(span["text"], span["font"], bold=_is_bold(span)))
-                bold.extend([_is_bold(span)] * len(span["text"]))
+    rows = visual_rows(block["lines"])
+    text_rows = [[sp for ln in row for sp in ln["spans"] if not _is_diagram_span(sp)] for row in rows]
+    extents = [(min(sp["bbox"][0] for sp in r if sp["text"].strip()), max(sp["bbox"][2] for sp in r if sp["text"].strip()))
+               for r in text_rows if any(sp["text"].strip() for sp in r)]
+    full_x0 = min((e[0] for e in extents), default=0.0)
+    full_x1 = max((e[1] for e in extents), default=0.0)
+    prev_x1: float | None = None
+    prev_tab = False
+    for row in rows:
+        row_diagram: list[str] = []
+        row_text: list[dict] = []
+        last_ink: float | None = None  # fim do último texto visível da linha
+        pending_space = False  # o texto anterior terminava em espaço
+        for line in row:
+            for span in line["spans"]:
+                if _is_diagram_span(span):
+                    row_diagram.append(span["text"])
+                    board_rect |= pymupdf.Rect(span["bbox"])
+                    continue
+                original = span["text"]
+                if not original.strip():
+                    pending_space = pending_space or last_ink is not None
+                    continue
+                if last_ink is not None:
+                    gap = span["bbox"][0] - last_ink
+                    if gap > TAB_GAP:
+                        row_text.append(dict(span, text="\t"))  # coluna de tabela ou sumário
+                    elif gap > 0.8 or pending_space or original[0].isspace():
+                        row_text.append(dict(span, text=" "))
+                row_text.append(dict(span, text=original.strip() if last_ink is not None else original.rstrip()))
+                last_ink = span["bbox"][2]
+                pending_space = original[-1].isspace()
+        if row_diagram:
+            diagram_lines.append("".join(row_diagram))
+        if not any(sp["text"].strip() for sp in row_text):
+            continue
+        if spans:
+            hard = prev_tab or (
+                prev_x1 is not None and prev_x1 < full_x1 - HARD_BREAK_SLACK * max(1.0, full_x1 - full_x0))
+            _join_previous(spans, bold, "".join(sp["text"] for sp in row_text).lstrip(), vocab or set(), hard)
+            while row_text and not row_text[0]["text"].strip():
+                row_text = row_text[1:]
+            row_text = [dict(row_text[0], text=row_text[0]["text"].lstrip())] + row_text[1:]
+        for span in row_text:
+            spans.append(SpanText(span["text"], span["font"], bold=_is_bold(span)))
+            bold.extend([_is_bold(span)] * len(span["text"]))
+        prev_x1 = max(sp["bbox"][2] for sp in row_text if sp["text"].strip())
+        prev_tab = any(sp["text"] == "\t" for sp in row_text)
     return spans, bold, diagram_lines, board_rect
 
 
-def _join_previous(spans: list[SpanText], bold: list[bool], next_line: str, vocab: set[str]) -> None:
-    """Une a linha anterior à próxima conforme ``lines.join`` (hífen no fim da linha)."""
+HARD_BREAK_SLACK = 0.15  # linha que termina antes de 85 % da largura: quebra forte
+TAB_GAP = 15.0  # espaço horizontal (pt) entre textos de uma linha que indica coluna
+
+
+def _is_diagram_span(span: dict) -> bool:
+    prof = profile_for(span["font"])
+    return prof is not None and prof.role == FontRole.DIAGRAM
+
+
+def _join_previous(spans: list[SpanText], bold: list[bool], next_line: str, vocab: set[str],
+                   hard_break: bool = False) -> None:
+    """Une a linha anterior à próxima conforme ``lines.join`` (hífen no fim da linha).
+
+    Uma linha que termina bem antes da margem direita do bloco (item de lista,
+    entrada de índice) é unida com "\n", preservada na tradução e no layout.
+    """
     while spans and spans[-1].text != spans[-1].text.rstrip():
         last = spans[-1]
         stripped = last.text.rstrip()
@@ -115,6 +196,8 @@ def _join_previous(spans: list[SpanText], bold: list[bool], next_line: str, voca
         return
     previous = "".join(sp.text for sp in spans[-3:])
     separator, drop_hyphen = join_lines(previous, next_line, vocab)
+    if hard_break and not drop_hyphen and separator == " ":
+        separator = "\n"
     if drop_hyphen:
         last = spans[-1]
         spans[-1] = SpanText(last.text[:-1], last.font, last.bold, last.italic)
@@ -124,6 +207,51 @@ def _join_previous(spans: list[SpanText], bold: list[bool], next_line: str, voca
     if separator:
         spans.append(SpanText(separator, ""))
         bold.append(bold[-1] if bold else False)
+
+
+def _block_layout(block: dict) -> BlockLayout | None:
+    text_spans = [sp for ln in block["lines"] for sp in ln["spans"] if not _is_diagram_span(sp) and sp["text"].strip()]
+    if not text_spans:
+        return None
+    rows = [r for r in visual_rows(block["lines"])
+            if any(not _is_diagram_span(sp) and sp["text"].strip() for ln in r for sp in ln["spans"])]
+    # Só trechos com tinta: espaços soltos à esquerda criariam um recuo falso.
+    inked = [[sp["bbox"] for ln in r for sp in ln["spans"] if sp["text"].strip()] for r in rows]
+    lines = [{"bbox": (min(b[0] for b in r), min(b[1] for b in r), max(b[2] for b in r), max(b[3] for b in r))}
+             for r in inked]
+    rect = pymupdf.Rect()
+    for sp in text_spans:
+        rect |= pymupdf.Rect(sp["bbox"])
+    weight: dict[tuple, int] = {}
+    for sp in text_spans:
+        key = (sp["font"], round(sp["size"], 1), sp["color"])
+        weight[key] = weight.get(key, 0) + len(sp["text"])
+    font, size, color = max(weight, key=weight.get)
+    total = sum(len(sp["text"].strip()) for sp in text_spans)
+    bold_chars = sum(len(sp["text"].strip()) for sp in text_spans if _is_bold(sp))
+    italic_chars = sum(len(sp["text"].strip()) for sp in text_spans if sp["flags"] & 2 or "Italic" in sp["font"])
+    x0s = [ln["bbox"][0] for ln in lines]
+    x1s = [ln["bbox"][2] for ln in lines]
+    centers = [(a + b) / 2 for a, b in zip(x0s, x1s, strict=True)]
+    # Linha única: a montagem decide se é centralizada, comparando com a coluna.
+    if len(lines) > 1 and max(centers) - min(centers) < 3 and max(x0s) - min(x0s) > 3:
+        align = "center"
+    elif len(lines) >= 3 and sum(1 for x in x1s[:-1] if x > rect.x1 - 2) >= 0.7 * (len(lines) - 1):
+        align = "justify"
+    else:
+        align = "left"
+    indent = x0s[0] - min(x0s[1:]) if len(lines) > 1 and x0s[0] - min(x0s[1:]) > 3 else 0.0
+    if len(lines) > 1:
+        line_height = (lines[-1]["bbox"][1] - lines[0]["bbox"][1]) / (len(lines) - 1)
+    else:
+        line_height = size * 1.15
+    return BlockLayout(
+        text_rect=tuple(round(v, 2) for v in rect),
+        span_rects=[tuple(sp["bbox"]) for sp in text_spans],
+        font=font, size=float(size), color=int(color),
+        bold=total > 0 and bold_chars / total > 0.9, italic=total > 0 and italic_chars / total > 0.9,
+        align=align, indent=round(indent, 1), line_height=round(line_height, 2), lines=len(lines),
+    )
 
 
 def _main_mask(resolved: ResolvedText, raw_bold: list[bool]) -> list[bool]:
@@ -170,7 +298,8 @@ def collect(doc: pymupdf.Document, pages: range | None = None) -> DocumentNotati
                 labels.append((pymupdf.Rect(block["bbox"]), first_line))
             resolved = resolve_spans(spans, KNOWN_PROFILES)
             role = "header" if block["bbox"][1] < 55 else "footer" if block["bbox"][1] > page.rect.height - 45 else "text"
-            result.regions.append(Region(pno + 1, bbox, col, resolved, _main_mask(resolved, raw_bold), role=role))
+            result.regions.append(Region(pno + 1, bbox, col, resolved, _main_mask(resolved, raw_bold), role=role,
+                                         layout=_block_layout(block)))
         # Rótulos ao lado dos diagramas: número ("1-21") e vez de jogar ("W", "B?").
         for diagram in (d for d in result.diagrams if d.page == pno + 1):
             area = pymupdf.Rect(diagram.bbox)
