@@ -57,3 +57,19 @@ na linha principal por coincidência.
 
 Na amostra traduzida, o P3 continua atendido com mais lances confirmados:
 515/515 (eram 482).
+
+## Figurinas de peão e PGN
+
+* **Figurina de peão** ("♙e4", "♟d×c6") passou a ser lida como lance de peão;
+  antes era descartada e, colada a um número, confundida com erro de OCR.
+  Na conversão para letras ela some ("e4"); em figurinas vira a branca, como
+  as demais peças. O livro de amostra não usa figurina de peão no texto
+  (contagens inalteradas); a cobertura vem dos testes.
+* **PGN por diagrama** (`app/chess/pgn_export.py`, `scripts/export_pgn.py`):
+  uma partida por diagrama, com a posição do diagrama (FEN, ainda proposta),
+  página e rótulo no cabeçalho e **só os lances da linha principal
+  validados**. Quando a validação perde a posição, a partida termina com um
+  comentário dizendo isso. No livro inteiro: 1.136 diagramas com posição, 790
+  com lances, 9.371 meios-lances, 242 interrompidos por perda de posição;
+  o arquivo é relido pelo python-chess sem erros. A saída fica fora do
+  repositório.

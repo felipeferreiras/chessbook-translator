@@ -79,6 +79,7 @@ class MoveSyntax:
     en_passant: bool
     to_file: str | None = None  # captura abreviada "hg": só a coluna de destino
     info: str = ""  # símbolos do Informator colados ao lance: "⊙", "△", "+−"...
+    pawn_char: str | None = None  # figurina de peão explícita: "♙e4", "♟×d5"
 
     @property
     def is_pawn(self) -> bool:
@@ -86,7 +87,8 @@ class MoveSyntax:
 
     @property
     def is_bare_square(self) -> bool:
-        return self.is_pawn and self.separator is None and self.to_file is None
+        # "♙e4" é lance; só "e4" sem figurina pode ser referência a uma casa.
+        return self.is_pawn and self.separator is None and self.to_file is None and self.pawn_char is None
 
     @property
     def claims_capture(self) -> bool | None:
@@ -150,9 +152,9 @@ _MOVE_BODY = rf"""
 |
 (?P<piece>[{_P}])(?P<ff>[a-h])?(?P<fr>[1-8])?(?P<sep>{_SEP})?(?P<to>[a-h][1-8])
 |
-(?P<pff>[a-h])(?P<pfr>[1-8])?(?P<psep>{_SEP})(?P<pto>[a-h][1-8])
+(?P<ppc>[♙♟])?(?P<pff>[a-h])(?P<pfr>[1-8])?(?P<psep>{_SEP})(?P<pto>[a-h][1-8])
 |
-(?P<bare>[a-h][1-8])
+(?P<bpc>[♙♟])?(?P<bare>[a-h][1-8])
 """
 _ABBREVIATED = r"""
 |
@@ -190,7 +192,7 @@ _SUSPICIOUS_RE = re.compile(
     # "3.865": número de lance seguido de dígitos (OCR de "3.♗b5").
     r"(?<![\w.])\d{1,3}\.(?!0-0)\d[\w]*"
     # "\f3", "&c6": símbolo desconhecido colado a uma casa (OCR de "♘f3").
-    rf"|(?<=[\s.])[^\s\w.,;:()\[\]\"'“”‘’«»…\-+=#!?{_P}{_INFO_SINGLE}]{{1,2}}[a-h]?[1-8]?x?[a-h][1-8](?![\w\-])"
+    rf"|(?<=[\s.])[^\s\w.,;:()\[\]\"'“”‘’«»…\-+=#!?{_P}♙♟{_INFO_SINGLE}]{{1,2}}[a-h]?[1-8]?x?[a-h][1-8](?![\w\-])"
 )
 # Casa alternativa logo após um lance: "♕b5(c2)?", "4...♔f4 (g4)".
 _ALT_DEST_RE = re.compile(
@@ -230,12 +232,12 @@ def _move_syntax(m: re.Match[str]) -> MoveSyntax:
                           to_square=g["to"], **rest)
     if g["pto"]:
         return MoveSyntax(piece_char=None, from_file=g["pff"], from_rank=g["pfr"], separator=g["psep"],
-                          to_square=g["pto"], **rest)
+                          to_square=g["pto"], pawn_char=g["ppc"], **rest)
     if g.get("abff"):
         return MoveSyntax(piece_char=None, from_file=g["abff"], from_rank=None, separator=None,
                           to_square=None, to_file=g["abtf"], **rest)
     return MoveSyntax(piece_char=None, from_file=None, from_rank=None, separator=None, to_square=g["bare"],
-                      **rest)
+                      pawn_char=g["bpc"], **rest)
 
 
 def _valid_abbreviation(m: re.Match[str]) -> bool:

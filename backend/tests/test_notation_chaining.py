@@ -9,9 +9,10 @@ from app.extraction.font_profiles import ResolvedText
 from app.pipeline.notation_pass import Diagram, DocumentNotation, Region, validate
 
 
-def _region(page: int, y: float, text: str, column: int = 0) -> Region:
+def _region(page: int, y: float, text: str, column: int = 0, bold: bool = False) -> Region:
+    """``bold``: o parágrafo inteiro em negrito (linha principal, como no livro)."""
     resolved = ResolvedText(text, list(range(len(text))), text)
-    return Region(page, (50, y, 250, y + 20), column, resolved, [False] * len(text))
+    return Region(page, (50, y, 250, y + 20), column, resolved, [bold] * len(text))
 
 
 def test_new_paragraph_can_go_back_to_a_move_of_the_previous_one():
@@ -51,3 +52,21 @@ def test_text_above_its_diagram_uses_the_following_diagram():
     moves = doc.regions[1].analysis.moves
     assert [m.status for m in moves] == [MoveStatus.VALIDATED] * 3
     assert "context_from_following_diagram" in moves[0].warnings
+
+
+def test_pgn_export_follows_the_validated_main_line():
+    from app.chess.pgn_export import export_games
+
+    start = chess.Board("8/8/8/3k4/8/8/4P3/4K3 w - - 0 1")
+    doc = DocumentNotation(convention=Convention.FIGURINE, style=LexStyle(numbers_without_dot=True))
+    doc.diagrams = [Diagram(1, (60, 40, 200, 180), DiagramReading(start.board_fen()), label="1-1", white_to_move=True)]
+    doc.regions = [_region(1, 200, "1 ♔d2 ♔e4 2 ♔c3", bold=True),
+                   _region(1, 230, "Also 2 ♔e2 ♔d4 3 ♔d2 draws."),  # variante: não entra na linha principal
+                   _region(1, 260, "2...♔e5 3 ♔d3", bold=True),
+                   _region(1, 290, "9 ♔h8", bold=True)]
+    validate(doc)
+    (game,) = export_games(doc, "Teste")
+    assert game.game.headers["Site"] == "p. 1" and game.game.headers["Round"] == "1-1"
+    assert game.game.headers["FEN"] == start.fen()
+    assert [m.uci() for m in game.game.mainline_moves()] == ["e1d2", "d5e4", "d2c3", "e4e5", "c3d3"]
+    assert not game.complete  # "9 ♔h8" não segue a linha: a partida para e diz por quê

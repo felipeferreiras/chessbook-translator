@@ -11,14 +11,14 @@ uv venv .venv && uv pip install --python .venv/bin/python -e ".[dev,spike]"
 Requisitos do sistema: fonte DejaVu Sans (`fonts-dejavu-core`); Tesseract é
 opcional (o teste de OCR é pulado se não estiver instalado).
 
-## Suíte atual — 203 testes, todos passando em 2026-10-23
+## Suíte atual — 205 testes, todos passando em 2026-10-23
 
 | Arquivo | Cobre |
 |---|---|
 | `test_notation_lexer.py` | formas de lance (EN, PT, FAN, longa, promoções, e.p., roques com O/0), números de lance, reticências, casas na prosa, parênteses de prosa × variantes, padrões de OCR, descritiva, preservação de posições |
 | `test_notation_validate.py` | posição inicial não presumida, hipótese explícita, mesma linha nas três notações, capturas, xeque-mate, roque × `Kg1`, promoções, promoção sem peça (ambígua), SAN subespecificado (ambíguo), desambiguação por coluna/linha/casa, `R` torre × rei, ilegal com perda de contexto, FEN não padrão, números incompatíveis, variantes simples e aninhadas, variante ilegal sem quebrar a principal, ramificação implícita, lances sem número após prosa, marcadores incoerentes, en passant, OCR suspeito, encadeamento de regiões, descritiva |
-| `test_notation_render_convention.py` | preservação byte a byte, FAN→EN/PT, ida e volta EN→PT→FAN→EN, promoção, desambiguação e sinais mantidos, política `strict` × `symbol_only`, letra ambígua nunca convertida, lance ambíguo nunca convertido, detecção de convenção (6 casos) |
-| `test_notation_chaining.py` | volta a um lance de parágrafo anterior, exigência de segmento legal (outra partida vira lacuna), motivo da falta de posição, texto antes do próprio diagrama |
+| `test_notation_render_convention.py` | figurinas de peão (leitura e conversão), preservação byte a byte, FAN→EN/PT, ida e volta EN→PT→FAN→EN, promoção, desambiguação e sinais mantidos, política `strict` × `symbol_only`, letra ambígua nunca convertida, lance ambíguo nunca convertido, detecção de convenção (6 casos) |
+| `test_notation_chaining.py` | volta a um lance de parágrafo anterior, exigência de segmento legal (outra partida vira lacuna), motivo da falta de posição, texto antes do próprio diagrama, PGN com a linha principal validada e interrupção registrada |
 | `test_translation_guard.py` | marcadores, restauração, marcador ausente/duplicado/inventado, casa alterada na prosa, reordenação, números, quebra de linha perdida e marcador mudado de linha (bloqueiam), negrito/itálico da prosa como `<b>`/`<i>` (marcação, restauração, estilo do bloco inteiro não marcado, marcas malformadas bloqueiam, marcas perdidas avisam), parêntese com notação que perde a prosa ou muda de marcadores (bloqueia) |
 | `test_book_conventions.py` | captura abreviada só depois de notação ("de" em português não é lance), parêntese de prosa com "de", números sem ponto, capturas abreviadas, símbolos do Informator colados, casa alternativa `(c2)`, parênteses de prosa, negrito como linha principal, ramificação decidida por um segmento posterior, ideias após △, numeração vinda do texto, leitura de diagramas em fonte (ida e volta, roque não inventado, defeito tipográfico, fileira deslocada, diagrama sem reis), rótulos, resolução de glifos com origem, glifo sem mapa, probe da fonte incorporada |
 | `test_translation_providers.py` | prompt e glossário; para Pollinations, Claude, ChatGPT e Gemini: argumentos do pedido e leitura de respostas construídas com as classes reais de cada SDK, recusas, bloqueios, cortes por limite, JSON inválido; configuração (privacidade, chave, modelo obrigatório, `.env`) |

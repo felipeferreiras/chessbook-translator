@@ -15,7 +15,7 @@ conforto de uso**.
 | ✅ | 2a' | Junção de linhas com hífen no fim (referências e hifenização) | 2a |
 | ◐ | 2c | Layout A: redação fora dos tabuleiros, fontes métricas, fluxo por coluna, linha única, sumário em tabela, verificações (texto, notação, sobra, sobreposição, diagramas) — amostra montada, 208/208 blocos (`docs/research/07-montagem-pdf.md`); negrito/itálico da prosa preservados; falta fallback B por página | 2a, 2b |
 | ✅ | 2e | Relatório P1–P11 (`scripts/poc_report.py`, `docs/research/08-relatorio-poc.md`): P1–P8, P10, P11 atendidos; página de revisão lado a lado gerada; P9 **aprovado pelo usuário em 2026-10-23** | 2a–2d |
-| ◐ | 3 | Notação (encadeamento entre parágrafos e diagramas feito: `docs/research/09-encadeamento.md`): probe de glifos com mais referências, sinais de fonte/`ToUnicode`, figurinas pretas, encadeamento entre parágrafos e diagramas, PGN por partida, testes com fontes Type 3 | 2e aprovada |
+| ◐ | 3 | Notação (feitos: encadeamento entre parágrafos e diagramas, figurinas de peão, PGN por diagrama — `docs/research/09-encadeamento.md`): probe de glifos com mais referências, sinais de fonte/`ToUnicode`, figurinas pretas, encadeamento entre parágrafos e diagramas, PGN por partida, testes com fontes Type 3 | 2e aprovada |
 | 7 | 4 | Glossário (modelo, editor, aplicação contextual), contexto por capítulo, editor de revisão com histórico, avaliação de modelos (Opus 5.5 × Sonnet 5.5 × local) | 3 |
 | 8 | 5 | Modos de layout completos, tipografia, detecção de cortes/sobreposições, relatórios de qualidade | 4 |
 | 9 | 6 | OCR melhorado (figurinas em imagem), retomada, reprocessamento seletivo, limites e custos, Docling para digitalizados | 5 |
