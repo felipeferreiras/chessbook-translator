@@ -65,15 +65,17 @@ Pollinations, não as cópias `community/`).
 
 | | GPT-5.4 Nano | GPT-5.5 | Gemini 3.8 Flash |
 |---|---|---|---|
-| Segmentos aceitos | 25/25 | 25/25 | **não rodou**: saldo pago insuficiente (HTTP 402) |
-| Notação e números | intactos | intactos | — |
-| "deflection" (desvio) | "atração" ✗ | "desvio" ✓ | — |
-| "desperado" | "desgraçado" ✗ | "desperado" ✓ | — |
-| Nome de cidade | traduzido ✗ | mantido ✓ | — |
-| "barrier", "bad bishop" | "bloqueio", "mau bispo" | "barreira", "bispo ruim" | — |
+| Segmentos aceitos | 25/25 | 25/25 | 25/25 (após recarga do saldo) |
+| Notação e números | intactos | intactos | intactos |
+| "deflection" (desvio) | "atração" ✗ | "desvio" ✓ | "desvio" ✓ |
+| "desperado" | "desgraçado" ✗ | "desperado" ✓ | "desperado" ✓ |
+| Nome de cidade | traduzido ✗ | mantido ✓ | mantido ✓ |
+| "barrier", "bad bishop" | "bloqueio", "mau bispo" | "barreira", "bispo ruim" | "barreira", "bispo mau" |
+| Pontuação dupla "!." | não | sim ✗ | não |
+| Razão de comprimento PT/EN | 1,01 | 1,01 | 1,01 |
 | Preço (entrada / saída por milhão, pollen) | 0,15 / 0,94 | 3,75 / 22,5 | 0,75 / 3,75 (catálogo) |
-| Custo das 2 páginas | ≈ 0,003 (estimado; p. 438 rodou em lote maior) | ≈ 0,13 (medido) | — |
-| Estimativa para 441 páginas | ≈ 0,5 | ≈ 28 | não medido |
+| Custo das 2 páginas | ≈ 0,003 (estimado; p. 438 rodou em lote maior) | ≈ 0,13 (medido) | ≈ 0,036 (medido) |
+| Estimativa para 441 páginas | ≈ 0,5 | ≈ 28 | ≈ 8 |
 
 Observações:
 
@@ -84,4 +86,8 @@ Observações:
   referências partidas em fim de linha ("1- 186") chegam assim ao tradutor.
   O Nano às vezes as junta, o GPT-5.5 as preserva. A junção deve ser feita na
   extração, de forma controlada.
+* O Gemini 3.8 Flash teve a mesma qualidade terminológica do GPT-5.5 nessas
+  páginas, sem a pontuação dupla, por cerca de 1/4 do custo. Gerou mais tokens
+  de saída que o GPT-5.5 (7.677 contra 4.398), provavelmente por raciocínio
+  contabilizado como saída.
 * Com duas páginas, a comparação é indicativa, não estatística.
