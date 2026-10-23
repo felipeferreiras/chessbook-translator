@@ -72,7 +72,7 @@ Pollinations, não as cópias `community/`).
 | Nome de cidade | traduzido ✗ | mantido ✓ | — |
 | "barrier", "bad bishop" | "bloqueio", "mau bispo" | "barreira", "bispo ruim" | — |
 | Preço (entrada / saída por milhão, pollen) | 0,15 / 0,94 | 3,75 / 22,5 | 0,75 / 3,75 (catálogo) |
-| Custo medido, 2 páginas | ≈ 0,003 | ≈ 0,13 | — |
+| Custo das 2 páginas | ≈ 0,003 (estimado; p. 438 rodou em lote maior) | ≈ 0,13 (medido) | — |
 | Estimativa para 441 páginas | ≈ 0,5 | ≈ 28 | não medido |
 
 Observações:
