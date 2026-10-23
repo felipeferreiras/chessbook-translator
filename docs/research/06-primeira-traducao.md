@@ -91,3 +91,46 @@ Observações:
   de saída que o GPT-5.5 (7.677 contra 4.398), provavelmente por raciocínio
   contabilizado como saída.
 * Com duas páginas, a comparação é indicativa, não estatística.
+
+## Amostra completa com Gemini 3.8 Flash (modelo escolhido)
+
+Rodada em 2026-10-23, já com a junção de linhas corrigida na extração (ver
+abaixo). Mesmas 16 páginas.
+
+| Métrica | GPT-5.4 Nano | Gemini 3.8 Flash |
+|---|---|---|
+| Segmentos com prosa aceitos | 208/208 | 208/208 |
+| Falhas / revisões | 0 / 0 | 0 / 0 |
+| Avisos | 3 | 0 |
+| Inglês residual (lista de palavras) | 0 | 0 |
+| "deflection" → "atração" | sim ✗ | não |
+| Nomes e locais mantidos | parcial | todos |
+| Razão de comprimento PT/EN (média) | ~1,0 | 1,02 (0,89–1,16) |
+| Chamadas / tempo | 14 / ~3 min | 12 / ~7,5 min |
+| Tokens entrada / saída | 40.504 / 13.101 | 41.287 / 46.291 |
+| Custo pelo catálogo | ≈ 0,018 pollen | ≈ 0,20 pollen |
+
+Leitura humana de parágrafos das páginas 13, 22, 201, 380 e 405: tradução fiel
+e natural, terminologia correta ("ruptura c5-c6", "casas correspondentes",
+"lance de espera"). Ajustes de estilo encontrados: "peão passado de f" (melhor
+"peão f passado"); "estão em correspondência" (melhor "são correspondentes").
+
+Os 40 segmentos devolvidos idênticos são nomes de jogadores, locais e anos e o
+índice onomástico. Decisão editorial pendente: manter nomes geográficos no
+original (comportamento atual, segue a regra 5 do prompt) ou usar a forma
+portuguesa ("Hamburgo", "Moscou", "Tchecoslováquia").
+
+O Gemini gera mais tokens de saída que de entrada (raciocínio cobrado como
+saída); a estimativa para o livro inteiro passa a ser ≈ 0,20 / 16 × 441 ≈
+5–6 pollen, com a ressalva de que a amostra tem páginas de índice menos densas.
+
+## Correção da extração: hífen no fim da linha
+
+Medido no livro inteiro antes e depois de `app/extraction/lines.py`:
+
+| | Antes | Depois |
+|---|---|---|
+| Referências partidas ("9- 158") | 92 | 0 |
+| Palavras partidas pela hifenização ("posi- tion") | 333 | 3 (dentro da própria linha do PDF; 1 é hífen suspenso correto) |
+| Lances validados | 24.581 | 24.590 |
+| Ilegais | 115 | 116 (o novo é "play c2-c3", um plano antes invisível por estar partido; agora é notação protegida e vai para revisão) |

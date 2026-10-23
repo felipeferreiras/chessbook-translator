@@ -24,6 +24,8 @@ from app.extraction.font_profiles import (
     profile_for,
     resolve_spans,
 )
+from app.extraction.lines import join as join_lines
+from app.extraction.lines import vocabulary
 
 
 @dataclass
@@ -66,7 +68,9 @@ def _is_bold(span: dict) -> bool:
     return bool(span["flags"] & 16) or "Bold" in span["font"]
 
 
-def _block_parts(block: dict) -> tuple[list[SpanText], list[bool], list[str], pymupdf.Rect]:
+def _block_parts(
+    block: dict, vocab: set[str] | None = None
+) -> tuple[list[SpanText], list[bool], list[str], pymupdf.Rect]:
     """Separa um bloco em texto (com negrito por caractere) e linhas de diagrama.
 
     Devolve também a caixa só do tabuleiro: o bloco pode incluir o cabeçalho
@@ -90,12 +94,36 @@ def _block_parts(block: dict) -> tuple[list[SpanText], list[bool], list[str], py
             diagram_lines.append("".join(line_diagram))
         if line_text:
             if spans and line_no > 0:
-                spans.append(SpanText(" ", ""))
-                bold.append(bold[-1] if bold else False)
+                _join_previous(spans, bold, "".join(sp["text"] for sp in line_text).lstrip(), vocab or set())
+                line_text = [dict(line_text[0], text=line_text[0]["text"].lstrip())] + line_text[1:]
             for span in line_text:
                 spans.append(SpanText(span["text"], span["font"], bold=_is_bold(span)))
                 bold.extend([_is_bold(span)] * len(span["text"]))
     return spans, bold, diagram_lines, board_rect
+
+
+def _join_previous(spans: list[SpanText], bold: list[bool], next_line: str, vocab: set[str]) -> None:
+    """Une a linha anterior à próxima conforme ``lines.join`` (hífen no fim da linha)."""
+    while spans and spans[-1].text != spans[-1].text.rstrip():
+        last = spans[-1]
+        stripped = last.text.rstrip()
+        del bold[len(bold) - (len(last.text) - len(stripped)):]
+        spans[-1] = SpanText(stripped, last.font, last.bold, last.italic)
+        if not stripped:
+            spans.pop()
+    if not spans:
+        return
+    previous = "".join(sp.text for sp in spans[-3:])
+    separator, drop_hyphen = join_lines(previous, next_line, vocab)
+    if drop_hyphen:
+        last = spans[-1]
+        spans[-1] = SpanText(last.text[:-1], last.font, last.bold, last.italic)
+        bold.pop()
+        if not spans[-1].text:
+            spans.pop()
+    if separator:
+        spans.append(SpanText(separator, ""))
+        bold.append(bold[-1] if bold else False)
 
 
 def _main_mask(resolved: ResolvedText, raw_bold: list[bool]) -> list[bool]:
@@ -121,12 +149,15 @@ def _order(blocks: list[dict], page: pymupdf.Page) -> list[tuple[int, dict]]:
 def collect(doc: pymupdf.Document, pages: range | None = None) -> DocumentNotation:
     """Extrai regiões e diagramas (sem validar ainda)."""
     result = DocumentNotation()
-    for pno in pages or range(doc.page_count):
+    page_numbers = list(pages or range(doc.page_count))
+    # Vocabulário do próprio documento, para desfazer a hifenização de fim de linha.
+    vocab = vocabulary([doc[p].get_text() for p in range(doc.page_count)])
+    for pno in page_numbers:
         page = doc[pno]
         blocks = [b for b in page.get_text("dict")["blocks"] if b["type"] == 0]
         labels: list[tuple[pymupdf.Rect, str]] = []
         for col, block in _order(blocks, page):
-            spans, raw_bold, diagram_lines, board_rect = _block_parts(block)
+            spans, raw_bold, diagram_lines, board_rect = _block_parts(block, vocab)
             bbox = tuple(round(v, 1) for v in block["bbox"])
             if diagram_lines:
                 board_bbox = tuple(round(v, 1) for v in board_rect)

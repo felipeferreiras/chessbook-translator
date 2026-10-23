@@ -11,7 +11,7 @@ uv venv .venv && uv pip install --python .venv/bin/python -e ".[dev,spike]"
 Requisitos do sistema: fonte DejaVu Sans (`fonts-dejavu-core`); Tesseract é
 opcional (o teste de OCR é pulado se não estiver instalado).
 
-## Suíte atual — 157 testes, todos passando em 2026-10-23
+## Suíte atual — 170 testes, todos passando em 2026-10-23
 
 | Arquivo | Cobre |
 |---|---|
@@ -22,6 +22,7 @@ opcional (o teste de OCR é pulado se não estiver instalado).
 | `test_book_conventions.py` | números sem ponto, capturas abreviadas, símbolos do Informator colados, casa alternativa `(c2)`, parênteses de prosa, negrito como linha principal, ramificação decidida por um segmento posterior, ideias após △, numeração vinda do texto, leitura de diagramas em fonte (ida e volta, roque não inventado, defeito tipográfico, fileira deslocada, diagrama sem reis), rótulos, resolução de glifos com origem, glifo sem mapa, probe da fonte incorporada |
 | `test_translation_providers.py` | prompt e glossário; para Pollinations, Claude, ChatGPT e Gemini: argumentos do pedido e leitura de respostas construídas com as classes reais de cada SDK, recusas, bloqueios, cortes por limite, JSON inválido; configuração (privacidade, chave, modelo obrigatório, `.env`) |
 | `test_translation_service.py` | fluxo completo com notação restaurada byte a byte, segmentos só de notação não enviados, contexto mascarado, marcador perdido → nova tentativa → revisão, casa ou símbolo alterado rejeitado, cache, lotes, disjuntor após falhas, recusa, id ausente, razão de comprimento |
+| `test_line_joining.py` | hífen no fim da linha: referências, casas e lances partidos, hífen suspenso, nomes compostos, hifenização desfeita só com evidência do vocabulário, alinhamento do negrito |
 | `test_pdf_fixtures.py` | extração de FAN Unicode, fonte figurina por letras, fonte de uso privado; proposta de mapa de glifos; letras comuns não confundidas; validação após mapeamento; caracterização do `insert_htmlbox`; caracterização do Tesseract com FAN |
 
 Casos ambíguos cujo resultado correto é **pedir revisão**: SAN subespecificado,

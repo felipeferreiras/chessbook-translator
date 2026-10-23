@@ -11,7 +11,8 @@ conforto de uso**.
 | ◐ | 2b | Diagramas em fonte lidos e associados a rótulos (feito); falta diagramas vetoriais/imagem e ligação com soluções ("9/21") e referências ("diagram 1-1") | 2a |
 | ✅ | 2b' | Mapa de glifos Linares confirmado pelo usuário (2026-10-22) | 2a |
 | ✅ | 2d | Provedores, glossário, cache e revisão; primeira tradução real da amostra com GPT-5.4 Nano (208/208 aceitos) | 2a |
-| **agora** | 2d' | Comparar um modelo maior nas páginas 21 e 438 (terminologia em índices) e decidir o modelo do livro | 2d |
+| ✅ | 2d' | Comparação Nano × GPT-5.5 × Gemini; **modelo escolhido: Gemini 3.8 Flash**; amostra de 16 páginas traduzida (208/208) | 2d |
+| ✅ | 2a' | Junção de linhas com hífen no fim (referências e hifenização) | 2a |
 | 3 | 2c | Layout A com calibração, expansão e verificação de presença; fallback B por página | 2a, 2b |
 | 5 | 2e | Relatório P1–P11 e comparação lado a lado mínima; **avaliação da POC com o usuário** | 2a–2d |
 | 6 | 3 | Notação: probe de glifos com mais referências, sinais de fonte/`ToUnicode`, figurinas pretas, encadeamento entre parágrafos e diagramas, PGN por partida, testes com fontes Type 3 | 2e aprovada |
