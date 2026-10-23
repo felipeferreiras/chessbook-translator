@@ -55,10 +55,16 @@ em uma linha só), a comparação usava a caixa do glifo inteira e acusava como
 | Texto original remanescente | 0 |
 | Sobreposições | 0 |
 | Diagramas verificados / alterados | 32 / 0 |
-| Blocos em tamanho original | 167 |
-| Reduzidos | 41 (18 a 97 %, 13 a 94–96 %, 8 a 91 %, 1 a 87 %, 1 a 81 %) |
-| Para revisão | 1 (81 %: parágrafo de duas linhas entre outro bloco e um diagrama) |
-| Páginas sem pendências | 15 de 16 |
+| Blocos em tamanho original | 166 |
+| Reduzidos | 42 (13 a 97 %, 18 a 94 %, 8 a 91 %, 3 a 87–88 %) |
+| Para revisão | 0 |
+| Páginas sem pendências | 16 de 16 |
+| Trechos de prosa em negrito / itálico | 49 / 6, todos devolvidos pelo tradutor e reaplicados |
+
+Números da segunda rodada (2026-10-23), com negrito e itálico da prosa
+enviados como `<b>`/`<i>`: 208/208 segmentos aceitos sem nenhum aviso, 13
+chamadas, 46.078 tokens de entrada e 46.108 de saída. A tradução mudou um
+pouco de comprimento e o bloco que antes ficava a 81 % passou a caber.
 
 ## Defeitos encontrados na inspeção visual e corrigidos
 
@@ -79,6 +85,9 @@ em uma linha só), a comparação usava a caixa do glifo inteira e acusava como
   criavam um recuo falso de 18 pt.
 * **Parágrafos reduzidos com espaço livre na página** (p. 13): resolvido pelo
   fluxo por coluna.
+* **Negrito e itálico da prosa perdidos** (verbetes do índice, capítulos no
+  sumário, título de obra no prefácio): agora vão ao tradutor como marcas e
+  voltam aplicados; marcas malformadas bloqueiam a aceitação.
 
 ## Limitações conhecidas
 
