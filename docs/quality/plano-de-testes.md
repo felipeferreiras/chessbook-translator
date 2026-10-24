@@ -11,7 +11,7 @@ uv venv .venv && uv pip install --python .venv/bin/python -e ".[dev,spike]"
 Requisitos do sistema: fonte DejaVu Sans (`fonts-dejavu-core`); Tesseract é
 opcional (o teste de OCR é pulado se não estiver instalado).
 
-## Suíte atual — 246 testes, todos passando em 2026-10-24
+## Suíte atual — 275 testes, todos passando em 2026-10-24
 
 | Arquivo | Cobre |
 |---|---|
@@ -21,7 +21,7 @@ opcional (o teste de OCR é pulado se não estiver instalado).
 | `test_notation_chaining.py` | volta a um lance de parágrafo anterior, exigência de segmento legal (outra partida vira lacuna), motivo da falta de posição, texto antes do próprio diagrama, PGN com a linha principal validada e interrupção registrada |
 | `test_translation_guard.py` | marcadores, restauração, marcador ausente/duplicado/inventado, casa alterada na prosa, reordenação, números, quebra de linha perdida e marcador mudado de linha (bloqueiam), negrito/itálico da prosa como `<b>`/`<i>` (marcação, restauração, estilo do bloco inteiro não marcado, marcas malformadas bloqueiam, marcas perdidas avisam), parêntese com notação que perde a prosa ou muda de marcadores (bloqueia) |
 | `test_book_conventions.py` | captura abreviada só depois de notação ("de" em português não é lance), parêntese de prosa com "de", números sem ponto, capturas abreviadas, símbolos do Informator colados, casa alternativa `(c2)`, parênteses de prosa, negrito como linha principal, ramificação decidida por um segmento posterior, ideias após △, numeração vinda do texto, leitura de diagramas em fonte (ida e volta, roque não inventado, defeito tipográfico, fileira deslocada, diagrama sem reis), bloco dividido em volta do tabuleiro, tabuleiro em faixas reunido, tabuleiros empilhados num bloco separados, lances desenhados como vetor bloqueiam o parágrafo, rótulos, resolução de glifos com origem, glifo sem mapa, probe da fonte incorporada |
-| `test_translation_providers.py` | prompt e glossário; para Pollinations, Claude, ChatGPT e Gemini: argumentos do pedido e leitura de respostas construídas com as classes reais de cada SDK, recusas, bloqueios, cortes por limite, JSON inválido; configuração (privacidade, chave, modelo obrigatório, `.env`) |
+| `test_translation_providers.py` | prompt e glossário; para Pollinations, Claude, ChatGPT e Gemini: argumentos do pedido e leitura de respostas construídas com as classes reais de cada SDK, recusas, bloqueios, cortes por limite, JSON inválido (com os tokens cobrados entrando no custo); configuração (privacidade, chave, modelo obrigatório, `.env`) |
 | `test_translation_service.py` | fluxo completo com notação restaurada byte a byte, segmentos só de notação não enviados, contexto mascarado, marcador perdido → nova tentativa → revisão, casa ou símbolo alterado rejeitado, cache, lotes, disjuntor após falhas, recusa, id ausente, razão de comprimento |
 | `test_line_joining.py` | hífen no fim da linha: referências, casas e lances partidos, hífen suspenso, nomes compostos, hifenização desfeita só com evidência do vocabulário, alinhamento do negrito |
 | `test_layout_compose.py` | montagem em página sintética: original removido e tabuleiro intacto, fluxo empurra o bloco seguinte, tabuleiro encerra o fluxo, bloco que não cabe vai para revisão, redação recortada fora do tabuleiro, moldura do diagrama, linha única centralizada sem invadir vizinhos, HTML (negrito, itálico, símbolos, sumário em tabela com estilo por célula), substituição de fontes, notação ausente, fundo sombreado retirado sem afetar texto e tabuleiro, títulos lado a lado dividem o espaço entre eles, texto ausente × cortado no fim |
@@ -30,7 +30,9 @@ opcional (o teste de OCR é pulado se não estiver instalado).
 | `test_project_store.py` | original somente leitura conferido pelo sha256, importação, edição versionada e registrada, edição que muda lance ou casa recusada, reversão como versão nova, aprovação zerada ao mudar, glossário do projeto, exportação para a montagem |
 | `test_api.py` | listagem, edição recusada com motivos e aceita, reversão, aprovação, glossário padrão + projeto, ids validados, imagem da página |
 | `test_compare_models.py` | métricas da comparação de modelos: estados dos segmentos, avisos de glossário e custo pelo catálogo |
-| `test_translation_jobs.py` | todos os motores com previsão, páginas inválidas recusadas, tarefa traduz pendentes e registra custo, parada no teto de gasto, motor não configurado, previsão igual aos lotes enviados, preços sem rede |
+| `test_translation_jobs.py` | todos os motores com previsão, páginas inválidas recusadas, tarefa traduz pendentes e registra custo, parada antes de uma seção que passaria do teto e depois de passar dele, motor não configurado, previsão igual aos lotes enviados, preços sem rede, tarefa órfã interrompida e retomada sem repetir, tarefa viva não tomada por órfã, sinal de vida recente exigido de outro processo, teto do projeto limitando cada tarefa, modos de retradução (versão humana nunca entra, cache × tradução nova), glossário alterado marca só quem usa o termo, nova tentativa que falha mantém a tradução anterior |
+| `test_assembly.py` | partes reaproveitadas e só a página editada remontada, montagem interrompida retomada pelas partes prontas, código novo invalida as partes, montagem pela API (andamento, recusa da segunda, qualidade, imagem, "edições depois desta montagem"), processo morto dado como interrompido |
+| `test_ocr.py` | hOCR com caixas e confiança, linhas partidas no vão entre colunas, padrões impossíveis marcados, página digitalizada reconhecida, tabuleiro pela moldura (e nenhum inventado sem ele), letra classificada como letra, OCR da página sintética sem lance errado sem aviso, livro digitalizado de ponta a ponta (extração com OCR guardado e relido, aviso obrigatório até a aprovação, montagem sem sobra do original e diagrama intacto), livro digital com uma página só de imagem não passa pelo OCR |
 | `test_pdf_fixtures.py` | extração de FAN Unicode, fonte figurina por letras, fonte de uso privado; proposta de mapa de glifos; letras comuns não confundidas; validação após mapeamento; caracterização do `insert_htmlbox`; referências do probe (todas as fontes com figurinas, margem contra outra peça); caracterização do Tesseract com FAN |
 
 Casos ambíguos cujo resultado correto é **pedir revisão**: SAN subespecificado,
@@ -56,7 +58,7 @@ posição presumida.
 | Regressão | 2+ | documentos de referência sintéticos versionados com saída esperada (IR em JSON + hashes de texto por bloco) |
 | Visual | 2+ | renderização antes/depois, alinhamento por correlação, diferença por região; nunca critério único |
 | Notação | 3 | PDFs com fontes Type 3, `ToUnicode` ausente, figurinas pretas, sequências longas, partidas inteiras em PGN |
-| Retomada | 6 | interrupção forçada em cada etapa |
+| Retomada | 6 ✅ | tarefa órfã, cancelamento e parada no teto retomados; montagem interrompida retomada pelas partes (`test_translation_jobs.py`, `test_assembly.py`) |
 | Casos extremos | 6–7 | duas colunas, notas longas, baixa resolução, páginas inclinadas, texto PT muito maior |
 
 Livros reais do usuário **não** entram no repositório. Testes com livros reais

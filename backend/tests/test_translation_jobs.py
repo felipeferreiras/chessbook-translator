@@ -38,8 +38,14 @@ def client(tmp_path, monkeypatch):
     pdf.write_bytes(syn.build_page("fan_unicode").pdf_bytes)
     ProjectStore.create(tmp_path / "storage", "livro", "Livro", pdf, pages=3).add_book_segments(SEGMENTS)
     monkeypatch.setattr(api, "prices", lambda: PRICES)
-    monkeypatch.setattr(api, "provider_for", lambda eng: CountingProvider())
+    monkeypatch.setattr(api, "provider_for", lambda eng: _as_engine(CountingProvider(), eng))
     return TestClient(api.app)
+
+
+def _as_engine(provider, eng):
+    """Faz o provedor falso usar o nome e o modelo do motor, como o real (as chaves do cache dependem deles)."""
+    provider.name, provider.model = "pollinations", eng.model
+    return provider
 
 
 def _wait(client, job_id, timeout=10):
@@ -85,11 +91,24 @@ def test_job_translates_pending_segments_and_records_cost(client):
     assert again["pending"] == 0 and all(e["segments_to_send"] == 0 for e in again["estimates"])
 
 
-def test_job_stops_when_real_cost_passes_the_budget(client):
+def test_job_stops_before_a_section_that_would_pass_the_budget(client):
     job = client.post("/api/projects/livro/jobs", json={"engine": "opus-5.5", "pages": "1-3", "budget": 0.0001,
                                                         "author": "eu"}).json()
     done = _wait(client, job["id"])
-    assert done["state"] == "stopped_budget" and done["done"] < done["total"]
+    assert done["state"] == "stopped_budget" and done["done"] == 0 and done["cost"] == 0
+    assert "nada dele foi enviado" in done["error"]
+
+
+def test_job_stops_when_real_cost_passes_the_budget(client, monkeypatch):
+    class Expensive(FakeProvider):  # gasta muito mais do que a previsão
+        def translate_batch(self, request):
+            r = super().translate_batch(request)
+            return BatchResult(r.translations, r.provider, r.model, Usage(100_000, 50_000, 0), r.raw_text)
+    monkeypatch.setattr(api, "provider_for", lambda eng: Expensive())
+    job = client.post("/api/projects/livro/jobs", json={"engine": "sonnet-5.5", "pages": "1-3", "budget": 0.01,
+                                                        "author": "eu"}).json()
+    done = _wait(client, job["id"])
+    assert done["state"] == "stopped_budget" and 0 < done["done"] < done["total"]
     assert "passou do teto" in done["error"]
 
 
@@ -121,3 +140,135 @@ def test_estimate_matches_what_translation_sends():
 def test_prices_fall_back_to_the_recorded_table_without_network(tmp_path):
     p = load_prices(tmp_path / "catalogo.json", fetch=False)
     assert "2026-10-24" in p.source and p.by_model["anthropic/claude-sonnet-5.5"] == (1.5e-6, 7.5e-6)
+
+
+def _job(client, **body):
+    payload = {"engine": "sonnet-5.5", "pages": "1-3", "budget": 1.0, "author": "eu", **body}
+    r = client.post("/api/projects/livro/jobs", json=payload)
+    assert r.status_code == 200, r.text
+    return _wait(client, r.json()["id"])
+
+
+def _store(tmp_path):
+    return ProjectStore(tmp_path / "storage", "livro")
+
+
+def test_orphaned_job_is_marked_interrupted_and_resumes_without_repeating(client, tmp_path):
+    """Servidor morto no meio: a tarefa aparece interrompida e a retomada traduz só o que faltou."""
+    store = _store(tmp_path)
+    with store._db() as db:  # tarefa "rodando" num processo que já não existe, com p1-0 tratado
+        db.execute("INSERT INTO job (engine, model, pages, state, total, done, budget, author, created_at, runner)"
+                   " VALUES ('sonnet-5.5','anthropic/claude-sonnet-5.5','1-3','running',3,1,1.0,'eu','x','999999:morto')")
+        db.execute("INSERT INTO job_segment VALUES (1, 'p1-0', 'translated')")
+    jobs = client.get("/api/projects/livro/jobs").json()
+    assert jobs[0]["state"] == "interrupted" and "processo" in jobs[0]["error"]
+    # nova tarefa no mesmo projeto já não fica bloqueada pela órfã
+    plan = client.post("/api/projects/livro/estimate", json={"pages": "1-3", "resume_of": 1}).json()
+    assert plan["selected"] == 2  # p1-0 já tratado
+    r = client.post("/api/projects/livro/jobs/1/resume", json={"author": "eu"})
+    assert r.status_code == 200, r.text
+    done = _wait(client, r.json()["id"])
+    assert done["state"] == "done" and done["total"] == 2 and done["resumed_from"] == 1
+    assert store.segment("p1-0").current is None  # o órfão foi pulado (o registro dele era só de teste)
+    assert store.segment("p2-0").current.kind == "machine"
+    assert client.post("/api/projects/livro/jobs/2/resume", json={"author": "eu"}).status_code == 409  # concluída
+
+
+def test_other_process_needs_a_recent_heartbeat(tmp_path, client):
+    """Processo vivo (pid 1 sempre existe) sem sinal recente: a tarefa é dada como interrompida."""
+    from datetime import UTC, datetime, timedelta
+
+    from app.store import jobs as runner
+
+    store = _store(tmp_path)
+    old = (datetime.now(UTC) - timedelta(hours=2)).isoformat()
+    new = datetime.now(UTC).isoformat()
+    host = runner.socket.gethostname()
+    with store._db() as db:
+        for hb in (old, new):
+            db.execute("INSERT INTO job (engine, model, pages, state, total, budget, author, created_at, runner,"
+                       " heartbeat_at) VALUES ('sonnet-5.5','m','1','running',1,1.0,'eu','x',?,?)", (f"{host}:1:outro", hb))
+    assert runner.recover_orphans(store) == [1]  # só a que não deu sinal há duas horas
+
+
+def test_live_job_in_this_process_is_not_taken_for_an_orphan(client, tmp_path):
+    from app.store import jobs as runner
+
+    store = _store(tmp_path)
+    with store._db() as db:
+        db.execute("INSERT INTO job (engine, model, pages, state, total, budget, author, created_at, runner)"
+                   " VALUES ('sonnet-5.5','m','1','running',1,1.0,'eu','x',?)", (runner._runner(),))
+    runner._running.add((str(store.db_path), 1))
+    try:
+        assert runner.recover_orphans(store) == []
+    finally:
+        runner._running.discard((str(store.db_path), 1))
+    assert runner.recover_orphans(store) == [1]
+
+
+def test_project_spend_limit_caps_every_job(client, tmp_path):
+    r = client.put("/api/projects/livro/limits", json={"spend_limit": 0.002, "author": "eu"})
+    assert r.json() == {"spent": 0, "spend_limit": 0.002}
+    done = _job(client, pages="1", budget=1.0)
+    # teto da tarefa reduzido ao do projeto; a chamada real (0,003) passou dele
+    assert done["budget"] == 0.002 and done["cost"] == pytest.approx(0.003)
+    assert done["state"] == "stopped_budget"
+    r = client.post("/api/projects/livro/jobs", json={"engine": "sonnet-5.5", "pages": "2-3", "budget": 1.0,
+                                                      "author": "eu"})
+    assert r.status_code == 409 and "teto de gasto do projeto" in r.json()["detail"]
+    est = client.post("/api/projects/livro/estimate", json={"pages": "1-3"}).json()
+    assert est["remaining"] < 0 and est["spent"] == pytest.approx(0.003)
+    assert any(x["kind"] == "spend_limit" for x in client.get("/api/projects/livro/revisions").json())
+
+
+def test_retranslate_modes_select_what_they_promise(client, tmp_path):
+    store = _store(tmp_path)
+    _job(client)
+    est = client.post("/api/projects/livro/estimate", json={"pages": "1-3", "mode": "machine"}).json()
+    assert est["selected"] == 3 and est["skipped"] == {"not_needed": 1}
+    # o cache devolveria o mesmo texto de graça; "fresh" pede outra tradução e prevê o custo
+    by = {e["engine"]: e for e in est["estimates"]}
+    assert by["sonnet-5.5"]["segments_to_send"] == 0
+    fresh = client.post("/api/projects/livro/estimate", json={"pages": "1-3", "mode": "machine", "fresh": True}).json()
+    assert {e["engine"]: e for e in fresh["estimates"]}["sonnet-5.5"]["segments_to_send"] == 3
+    # versão humana nunca é selecionada
+    store.edit("p2-0", "O posto avançado em d5 decide a partida.", "revisor")
+    est = client.post("/api/projects/livro/estimate", json={"pages": "1-3", "mode": "machine"}).json()
+    assert est["selected"] == 2 and est["skipped"]["human"] == 1
+    assert client.post("/api/projects/livro/estimate", json={"pages": "1-3", "mode": "problems"}).json()["selected"] == 0
+    assert client.post("/api/projects/livro/estimate", json={"pages": "1-3", "mode": "glossary"}).json()["selected"] == 0
+    assert client.post("/api/projects/livro/estimate", json={"pages": "1", "mode": "nada"}).status_code == 400
+    assert client.post("/api/projects/livro/estimate", json={"pages": "1", "mode": "ids"}).status_code == 400
+    ids = client.post("/api/projects/livro/estimate",
+                      json={"pages": "1", "mode": "ids", "segment_ids": ["p3-0", "p2-0"]}).json()
+    assert ids["selected"] == 1  # p2-0 é humano
+
+
+def test_glossary_change_marks_only_segments_that_use_the_term(client, tmp_path):
+    from app.translation.glossary import GlossaryEntry
+
+    store = _store(tmp_path)
+    _job(client)
+    store.set_glossary_entry(GlossaryEntry("waiting move", "lance de espera alterado"), "eu")
+    est = client.post("/api/projects/livro/estimate", json={"pages": "1-3", "mode": "glossary"}).json()
+    assert est["selected"] == 1  # só p3-0 tem "waiting move"
+    done = _job(client, mode="glossary")
+    assert done["total"] == 1 and done["counts"] == {"translated": 1}
+    assert [v.kind for v in store.history("p3-0")] == ["machine", "machine"]  # histórico preservado
+
+
+def test_failed_retranslation_keeps_the_previous_translation(client, tmp_path, monkeypatch):
+    from app.translation.provider import ProviderError
+
+    store = _store(tmp_path)
+    _job(client)
+    before = store.segment("p3-0").current.text
+
+    class Broken(FakeProvider):
+        def translate_batch(self, request):
+            raise ProviderError("Pollinations 500: fora do ar")
+    monkeypatch.setattr(api, "provider_for", lambda eng: Broken())
+    done = _job(client, mode="ids", pages="3", segment_ids=["p3-0"], fresh=True)
+    assert done["state"] == "done_with_warnings" and done["counts"] == {"retry_failed": 1}
+    seg = store.segment("p3-0")
+    assert seg.current.text == before and seg.status == "translated" and not seg.needs_attention

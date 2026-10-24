@@ -298,8 +298,19 @@ def test_pollinations_json_modes():
 ])
 def test_pollinations_failures(kwargs, error):
     prov, _ = pollinations_provider(chat_completion(**kwargs))
-    with pytest.raises(error):
+    with pytest.raises(error) as exc:
         prov.translate_batch(request())
+    if error is ProviderError:  # resposta cortada ou inválida também foi cobrada
+        assert (exc.value.usage.input_tokens, exc.value.usage.output_tokens) == (700, 90)
+
+
+def test_billed_tokens_of_a_useless_answer_count_in_the_run():
+    from app.translation.service import SourceSegment, translate
+
+    prov, _ = pollinations_provider(chat_completion(finish="length"))
+    run = translate([SourceSegment("p1", "White wins after the pin.")], prov, Glossary.load())
+    assert run.results[0].status.value == "failed"
+    assert run.tokens()["input"] == 700 * len(run.calls) and len(run.calls) >= 2
 
 
 def test_pollinations_config_and_base_url():

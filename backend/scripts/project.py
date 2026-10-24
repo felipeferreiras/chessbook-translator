@@ -16,15 +16,15 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import subprocess
-import sys
 from collections import Counter
 from pathlib import Path
 
 import pymupdf
 
+from app.extraction.ocr import scanned_pages
 from app.pipeline.notation_pass import collect
 from app.pipeline.segments import book_segments
+from app.store import assembly
 from app.store.project_store import ProjectStore
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -34,9 +34,10 @@ def storage_root() -> Path:
     return Path(os.environ.get("CHESSBOOK_STORAGE", ROOT / "storage"))
 
 
-def style_masks(pdf: Path, pages: set[int]):
+def style_masks(pdf: Path, pages: set[int], ocr_cache: Path | None = None):
     """Negrito e itálico por segmento, com os mesmos ids de ``translate_pages``."""
-    notation = collect(pymupdf.open(pdf))
+    notation = collect(pymupdf.open(pdf), ocr_cache=ocr_cache,
+                       ocr_mode="on" if ocr_cache is not None and ocr_cache.exists() else "off")
     segs = book_segments(notation, pages=pages)
     return notation, {b.id: b.region.main_mask for b in segs}, {b.id: b.region.italic_mask for b in segs}
 
@@ -48,6 +49,8 @@ def main() -> None:
     c.add_argument("id")
     c.add_argument("name")
     c.add_argument("pdf", type=Path)
+    c.add_argument("--ocr", choices=("auto", "on", "off"), default="auto",
+                   help="páginas só de imagem: auto = OCR se a maioria do livro for digitalizada")
     i = sub.add_parser("import")
     i.add_argument("id")
     i.add_argument("translation", type=Path)
@@ -63,13 +66,22 @@ def main() -> None:
 
     if args.cmd == "create":
         doc = pymupdf.open(args.pdf)
-        notation = collect(doc)
+        # páginas digitalizadas: o OCR fica guardado no projeto, e a montagem relê exatamente o mesmo texto
+        ocr_tmp = root / f".{args.id}-ocr.json"
+        notation = collect(doc, ocr_cache=ocr_tmp, ocr_mode=args.ocr,
+                           progress=lambda stage, i, n: print(f"\r{stage}: {i}/{n} páginas", end="", flush=True))
+        images = scanned_pages(doc)
+        if images and not ocr_tmp.exists():
+            print(f"páginas só de imagem não lidas por OCR (capa, fotos?): {images[:20]} — use --ocr on para ler")
         store = ProjectStore.create(root, args.id, args.name, args.pdf, doc.page_count, notation.style)
+        if ocr_tmp.exists():
+            ocr_tmp.replace(store.dir / "ocr.json")
+            print()
         segs = book_segments(notation, doc.metadata.get("title", "") or args.name)
         store.add_book_segments([{"id": b.id, "page": b.page, "section": b.section.label,
                                   "source": b.region.resolved.text, "kind": b.kind,
                                   "bold": b.region.main_mask, "italic": b.region.italic_mask,
-                                  "blocked": b.blocked} for b in segs])
+                                  "blocked": b.blocked, "flags": b.flags} for b in segs])
         print(f"projeto criado em {store.dir} (sha256 {store.info['sha256'][:12]}…): {len(segs)} segmentos")
         return
     store = ProjectStore(root, args.id)
@@ -77,21 +89,18 @@ def main() -> None:
         raise SystemExit("o original do projeto não confere com o sha256 registrado")
     if args.cmd == "import":
         result = json.loads((args.translation / "resultado.json").read_text(encoding="utf-8"))
-        _, bold, italic = style_masks(store.original_path, set(result["summary"]["pages"]))
+        _, bold, italic = style_masks(store.original_path, set(result["summary"]["pages"]), store.dir / "ocr.json")
         print(f"{store.import_translation(result, bold, italic)} segmentos importados")
     elif args.cmd == "export":
         args.out.mkdir(parents=True, exist_ok=True)
         (args.out / "resultado.json").write_text(json.dumps(store.export_result(), ensure_ascii=False, indent=1),
                                                  encoding="utf-8")
         print(f"exportado para {args.out / 'resultado.json'}")
-    elif args.cmd == "assemble":
-        export = store.dir / "output" / "export"
-        export.mkdir(parents=True, exist_ok=True)
-        result = store.export_result()
-        (export / "resultado.json").write_text(json.dumps(result, ensure_ascii=False, indent=1), encoding="utf-8")
-        subprocess.run([sys.executable, "-m", "scripts.assemble_pdf", str(store.original_path), str(export),
-                        str(store.dir / "output")], check=True, cwd=Path(__file__).resolve().parents[1])
-        (store.dir / "output" / "pages.txt").write_text(" ".join(map(str, result["summary"]["pages"])))
+    elif args.cmd == "assemble":  # o mesmo caminho da interface: partes prontas são reaproveitadas
+        done = assembly.start(store, os.environ.get("USER", "linha de comando"), wait=True)
+        if done.state != "done":
+            raise SystemExit(f"montagem {done.state}: {done.error} (ver {store.dir / 'output' / 'montagem.log'})")
+        print(json.dumps(done.summary, ensure_ascii=False))
         print(f"PDF traduzido em {store.dir / 'output' / 'traduzido.pdf'}")
     elif args.cmd == "status":
         segs = store.segments()

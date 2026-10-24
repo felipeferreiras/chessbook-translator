@@ -79,6 +79,12 @@ def build_request(segments: list[Segment], glossary: Glossary, section: str = ""
     )
 
 
+def glossary_signature(masked_text: str, glossary: Glossary) -> str:
+    """Impressão digital dos termos do glossário que valem para um segmento (para achar traduções desatualizadas)."""
+    terms = "\n".join(Glossary.prompt_lines(glossary.relevant(masked_text)))
+    return hashlib.sha256(terms.encode("utf-8")).hexdigest()[:16]
+
+
 def cache_key(provider: str, model: str, system: str, segment: Segment, section: str,
               glossary: Glossary | None = None) -> str:
     """Inclui os termos do glossário do segmento: mudar um termo invalida só quem o usa."""

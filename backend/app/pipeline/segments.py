@@ -33,7 +33,15 @@ class BookSegment:
         if self.region.vector_glyphs:
             return (f"{self.region.vector_glyphs} glifos desenhados como vetor (lances sem texto extraível): "
                     "o bloco fica no original para revisão")
+        text = self.region.resolved.text.strip()
+        if len(text) <= 12 and any(f.startswith("ocr_baixa_confianca") for f in self.region.source_flags):
+            return "ocr: texto curto lido sem confiança (rótulo ou marca); fica como na imagem"
         return ""
+
+    @property
+    def flags(self) -> list[str]:
+        """Dúvidas sobre o texto de origem (OCR): o segmento pede conferência antes da aprovação."""
+        return list(self.region.source_flags)
 
     def source(self) -> SourceSegment:
         r = self.region

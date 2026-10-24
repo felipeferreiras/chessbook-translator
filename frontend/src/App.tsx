@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
-import { api, ApiError, GlossaryEntry, Project, Segment, Version } from "./api";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { api, ApiError, GlossaryEntry, Project, Segment, Selection, Version } from "./api";
 import QualityView from "./QualityView";
 import TranslateView from "./TranslateView";
 
@@ -37,6 +37,7 @@ export default function App() {
   const [tab, setTab] = useState<"pages" | "translate" | "quality" | "glossary">("pages");
   const [author, setAuthor] = useState(() => loadPref("author", ""));
   const [onlyAttention, setOnlyAttention] = useState(false);
+  const [retranslate, setRetranslate] = useState<Selection | null>(null);
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -46,9 +47,13 @@ export default function App() {
     }, (e) => setError(String(e)));
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Resposta atrasada de um projeto anterior não pode sobrescrever a do projeto escolhido agora.
+  const current = useRef(projectId);
+  current.current = projectId;
   const refreshProject = useCallback(() => {
     if (!projectId) return;
     api.project(projectId).then((p) => {
+      if (p.id !== current.current) return;
       setProject(p);
       setPage((cur) => cur ?? p.pages_with_segments[0]?.page ?? null);
     }, (e) => setError(String(e)));
@@ -57,6 +62,7 @@ export default function App() {
   useEffect(() => {
     savePref("project", projectId);
     setPage(null);
+    setProject(null);
     refreshProject();
   }, [projectId, refreshProject]);
 
@@ -86,7 +92,8 @@ export default function App() {
         </label>
         <nav>
           <button className={tab === "pages" ? "on" : ""} onClick={() => setTab("pages")}>Páginas</button>
-          <button className={tab === "translate" ? "on" : ""} onClick={() => setTab("translate")}>Traduzir</button>
+          <button className={tab === "translate" ? "on" : ""}
+                  onClick={() => { setRetranslate(null); setTab("translate"); }}>Traduzir</button>
           <button className={tab === "quality" ? "on" : ""} onClick={() => setTab("quality")}>Qualidade</button>
           <button className={tab === "glossary" ? "on" : ""} onClick={() => setTab("glossary")}>Glossário</button>
         </nav>
@@ -113,16 +120,23 @@ export default function App() {
           <main>
             {page !== null && (
               <PageView key={`${projectId}-${page}`} project={project} page={page} author={author}
-                        onlyAttention={onlyAttention} onChange={refreshProject} />
+                        onlyAttention={onlyAttention} onChange={refreshProject}
+                        onRetranslate={(s) => {
+                          setRetranslate({ pages: String(s.page), mode: "ids", segment_ids: [s.id], fresh: true });
+                          setTab("translate");
+                        }} />
             )}
           </main>
         </div>
       )}
       {project && tab === "translate" && (
-        <TranslateView projectId={project.id} pages={project.pages} author={author} onChange={refreshProject} />
+        <TranslateView key={JSON.stringify(retranslate)} projectId={project.id} pages={project.pages} author={author}
+                       spent={project.spent} spendLimit={project.spend_limit} initial={retranslate}
+                       onChange={refreshProject} />
       )}
       {project && tab === "quality" && (
-        <QualityView projectId={project.id} onOpenPage={(pg) => { setPage(pg); setTab("pages"); }} />
+        <QualityView projectId={project.id} author={author} onAssembled={refreshProject}
+                     onOpenPage={(pg) => { setPage(pg); setTab("pages"); }} />
       )}
       {project && tab === "glossary" && <GlossaryView projectId={project.id} author={author} />}
     </div>
@@ -130,7 +144,7 @@ export default function App() {
 }
 
 function PageView(props: { project: Project; page: number; author: string; onlyAttention: boolean;
-                           onChange: () => void }) {
+                           onChange: () => void; onRetranslate: (s: Segment) => void }) {
   const { project, page } = props;
   const [segments, setSegments] = useState<Segment[]>([]);
   const [showImages, setShowImages] = useState(() => loadPref("images", "1") === "1");
@@ -163,9 +177,9 @@ function PageView(props: { project: Project; page: number; author: string; onlyA
           </figure>
           <figure>
             {project.has_translated_pdf ? (
-              <img src={api.pageImage(project.id, page, "translated")} alt={`Página ${page}, tradução montada`} />
+              <TranslatedImage projectId={project.id} page={page} />
             ) : (
-              <p className="muted">PDF traduzido ainda não montado (scripts.project assemble).</p>
+              <p className="muted">PDF traduzido ainda não montado (aba Qualidade → Montar PDF traduzido).</p>
             )}
             <figcaption>Tradução montada (pode estar desatualizada em relação às edições)</figcaption>
           </figure>
@@ -173,13 +187,22 @@ function PageView(props: { project: Project; page: number; author: string; onlyA
       )}
       {shown.length === 0 && <p className="muted">Nada a revisar nesta página com o filtro atual.</p>}
       {shown.map((s) => (
-        <SegmentCard key={s.id} projectId={project.id} segment={s} author={props.author} onSaved={replace} />
+        <SegmentCard key={s.id} projectId={project.id} segment={s} author={props.author} onSaved={replace}
+                     onRetranslate={props.onRetranslate} />
       ))}
     </section>
   );
 }
 
-function SegmentCard(props: { projectId: string; segment: Segment; author: string; onSaved: (s: Segment) => void }) {
+function TranslatedImage(props: { projectId: string; page: number }) {
+  const [missing, setMissing] = useState(false);
+  if (missing) return <p className="muted">Esta página não está no PDF montado (sem texto para traduzir).</p>;
+  return <img src={api.pageImage(props.projectId, props.page, "translated")} onError={() => setMissing(true)}
+              alt={`Página ${props.page}, tradução montada`} />;
+}
+
+function SegmentCard(props: { projectId: string; segment: Segment; author: string; onSaved: (s: Segment) => void;
+                              onRetranslate: (s: Segment) => void }) {
   const { segment: s, projectId } = props;
   const [text, setText] = useState(s.current?.text ?? "");
   const [problems, setProblems] = useState<string[]>([]);
@@ -227,6 +250,15 @@ function SegmentCard(props: { projectId: string; segment: Segment; author: strin
                     aria-label={`Tradução de ${s.id}`} />
         </div>
       </div>
+      {s.source_flags.length > 0 && (
+        <details className="source-flags" open={!s.approved}>
+          <summary>
+            Texto lido por OCR: confira com a página original e aprove
+            {s.source_flags.length > 1 && ` (${s.source_flags.length - 1} trechos duvidosos)`}
+          </summary>
+          <ul>{s.source_flags.slice(1).map((f) => <li key={f}>{f}</li>)}</ul>
+        </details>
+      )}
       {s.machine_problems.length > 0 && (
         <ul className="problems">{s.machine_problems.map((p) => <li key={p}>{p}</li>)}</ul>
       )}
@@ -249,6 +281,11 @@ function SegmentCard(props: { projectId: string; segment: Segment; author: strin
         <button onClick={async () => setHistory(history ? null : await api.history(projectId, s.id))}>
           {history ? "Ocultar histórico" : "Histórico"}
         </button>
+        {s.status !== "blocked" && (!s.current || s.current.kind === "machine") && (
+          <button onClick={() => props.onRetranslate(s)} title="Pedir outra tradução automática, com previsão de custo">
+            Retraduzir…
+          </button>
+        )}
         {needAuthor && <span className="muted">Informe o nome do revisor para salvar.</span>}
         {message && <span className={problems.length ? "bad" : "ok"} role="status">{message}</span>}
       </footer>

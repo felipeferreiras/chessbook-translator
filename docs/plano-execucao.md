@@ -18,7 +18,7 @@ conforto de uso**.
 | ✅ | 3 | Notação (encadeamento entre parágrafos e diagramas, figurinas de peão, PGN por diagrama, probe com mais referências, sinais de fonte/ToUnicode, Type 3 — `docs/research/09-encadeamento.md`): probe de glifos com mais referências, sinais de fonte/`ToUnicode`, figurinas pretas, encadeamento entre parágrafos e diagramas, PGN por partida, testes com fontes Type 3 | 2e aprovada |
 | ✅ | 4 | Glossário (modelo, editor, aplicação contextual), contexto por capítulo, editor de revisão com histórico, avaliação de modelos (Opus 5.5 × Sonnet 5.5 × Gemini × Qwen aberto) — `docs/research/10-fase4.md` | 3 |
 | ✅ | 5 | Layout do livro inteiro (5569/5569 blocos, 441/441 páginas sem pendência na tradução simulada), memória (subconjuntos de fonte, montagem em blocos), tipografia (Urbanist/Liberation), detecção de cortes e sobreposições, aba Qualidade, seleção de motor com previsão de custo — `docs/research/12-fase5-layout.md`; modo B não foi necessário | 4 |
-| 9 | 6 | OCR melhorado (figurinas em imagem), retomada, reprocessamento seletivo, limites e custos, Docling para digitalizados | 5 |
+| ✅ | 6 | Retomada (tarefas órfãs e montagem em partes reaproveitadas: 216 s → 24 s depois de uma edição), reprocessamento seletivo (5 modos, "Retraduzir…" por parágrafo), teto de gasto do projeto e conferência antes de cada seção, OCR com figurinas pelos protótipos do livro (71–84 % dos lances com peça certos, diagramas 111/111, conferência obrigatória) — `docs/research/13-fase6.md`, ADR-0007; Docling não avaliado (Hugging Face bloqueado na rede) | 5 |
 | 10 | 7 | Livros completos: integridade, desempenho, custo, retomada | 6 |
 | 11 | 8 | Interface final, instalação, backup, revisão de segurança, limitações conhecidas | 7 |
 

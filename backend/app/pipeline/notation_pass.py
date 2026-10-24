@@ -57,6 +57,7 @@ class Region:
     layout: BlockLayout | None = None
     italic_mask: list[bool] = field(default_factory=list)  # itálico por caractere do texto resolvido
     vector_glyphs: int = 0  # contornos escuros dentro do texto: lances desenhados como vetor, sem texto extraível
+    source_flags: list[str] = field(default_factory=list)  # dúvidas sobre o próprio texto de origem (OCR)
 
 
 @dataclass
@@ -387,17 +388,38 @@ def _split_around_board(block: dict, board: pymupdf.Rect) -> list[dict]:
     return parts
 
 
-def collect(doc: pymupdf.Document, pages: range | None = None) -> DocumentNotation:
-    """Extrai regiões e diagramas (sem validar ainda)."""
+OCR_FLAG = "ocr: texto lido da imagem; confira lances, números e casas com a página original antes de aprovar"
+
+
+def collect(doc: pymupdf.Document, pages: range | None = None, ocr_cache=None, ocr_lang: str = "eng",
+            progress=None, ocr_mode: str = "auto") -> DocumentNotation:
+    """Extrai regiões e diagramas (sem validar ainda).
+
+    Páginas digitalizadas (só imagem) passam pelo OCR (``app.extraction.ocr``,
+    ``ocr_mode``), guardado em ``ocr_cache`` para que a montagem leia
+    exatamente o mesmo texto.
+    """
+    from app.extraction.ocr import document_ocr
+
     result = DocumentNotation()
     page_numbers = list(pages or range(doc.page_count))
+    scanned = document_ocr(doc, ocr_cache, ocr_lang, progress, ocr_mode)
     # Vocabulário do próprio documento, para desfazer a hifenização de fim de linha.
-    vocab = vocabulary([doc[p].get_text() for p in range(doc.page_count)])
+    vocab = vocabulary([doc[p].get_text() for p in range(doc.page_count)]
+                       + [" ".join(sp["text"] for b in v["blocks"] for ln in b["lines"] for sp in ln["spans"])
+                          for v in scanned.values()])
     for pno in page_numbers:
         page = doc[pno]
-        blocks = [b for b in page.get_text("dict")["blocks"] if b["type"] == 0]
+        ocr = scanned.get(pno + 1)
+        if ocr is not None:
+            blocks = ocr["blocks"]
+            for box in ocr["boards"]:
+                result.diagrams.append(Diagram(pno + 1, tuple(round(v, 1) for v in box), DiagramReading(
+                    None, ["imagem: a posição do diagrama não é lida em páginas digitalizadas"])))
+        else:
+            blocks = [b for b in page.get_text("dict")["blocks"] if b["type"] == 0]
         labels: list[tuple[pymupdf.Rect, str]] = []
-        ink = _vector_glyphs(page)
+        ink = _vector_glyphs(page) if ocr is None else []
         for col, whole in _order(blocks, page):
             _, _, diagram_lines, board_rect = _block_parts(whole, vocab)
             for lines, rect in _split_boards(_diagram_rows(whole)) if diagram_lines else []:
@@ -416,9 +438,10 @@ def collect(doc: pymupdf.Document, pages: range | None = None) -> DocumentNotati
                         else "footer" if block["bbox"][1] > page.rect.height - 45 else "text")
                 layout = _block_layout(block)
                 area = pymupdf.Rect(layout.text_rect if layout else block["bbox"]) + (-2, -2, 2, 2)
+                flags = [OCR_FLAG, *block.get("ocr_warnings", [])] if ocr is not None else []
                 result.regions.append(Region(pno + 1, bbox, col, resolved, _main_mask(resolved, raw_bold), role=role,
                                              layout=layout, italic_mask=_main_mask(resolved, _italic_chars(spans)),
-                                             vector_glyphs=sum(area.contains(c) for c in ink)))
+                                             vector_glyphs=sum(area.contains(c) for c in ink), source_flags=flags))
         _merge_board_strips(result.diagrams, pno + 1)
         # Rótulos ao lado dos diagramas: número ("1-21") e vez de jogar ("W", "B?").
         for diagram in (d for d in result.diagrams if d.page == pno + 1):

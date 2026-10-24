@@ -26,6 +26,7 @@ from pathlib import Path
 import numpy as np
 import pymupdf
 
+from app.extraction.ocr import OCR_FONT
 from app.pipeline.notation_pass import BlockLayout
 
 LIB = Path("/usr/share/fonts/truetype/liberation")
@@ -46,6 +47,7 @@ FONT_FAMILY = (
     (re.compile(r"Cambria|Calibri", re.IGNORECASE), "serif", "Cambria/Calibri → Liberation Serif"),
     # Figurinas são escritas na FreeSerif pelo HTML; o texto em volta é serifado.
     (re.compile(r"Linares", re.IGNORECASE), "serif", None),
+    (re.compile(OCR_FONT), "serif", "texto de OCR (fonte desconhecida) → Liberation Serif"),
 )
 SYMBOLS = re.compile(r"(\+−|−\+|[♔♕♖♗♘♙♚♛♜♝♞♟⊙△□⇆∞±∓⩲⩱−×])")
 
@@ -465,18 +467,22 @@ def compose_page(page: pymupdf.Page, original: pymupdf.Page, jobs: list[BlockJob
     archive, font_css = _archive()
     shading = remove_shading(page, boards)
     redacted: dict[str, list[pymupdf.Rect]] = {}
+    # Página digitalizada: o texto original são pixels da imagem; a redação os pinta com a cor do
+    # fundo em volta (papel amarelado ou quadro sombreado), não de branco.
+    scanned = any(j.layout.font == OCR_FONT for j in jobs)
     for job in jobs:
         for r in job.layout.span_rects:
             rect = away_from(pymupdf.Rect(r), boards)
             if rect.is_empty or rect.height < 1:
                 continue
             redacted.setdefault(job.region_id, []).append(rect)
-            page.add_redact_annot(rect)
-    page.apply_redactions(images=pymupdf.PDF_REDACT_IMAGE_NONE, graphics=pymupdf.PDF_REDACT_LINE_ART_NONE,
-                          text=pymupdf.PDF_REDACT_TEXT_REMOVE)
+            page.add_redact_annot(rect, fill=_background(original, rect) if scanned else (1, 1, 1))
+    page.apply_redactions(images=pymupdf.PDF_REDACT_IMAGE_PIXELS if scanned else pymupdf.PDF_REDACT_IMAGE_NONE,
+                          graphics=pymupdf.PDF_REDACT_LINE_ART_NONE, text=pymupdf.PDF_REDACT_TEXT_REMOVE)
     # Texto original que sobreviveu à redação ficaria sobreposto à tradução.
     leftovers = [rid for rid, rects in redacted.items()
-                 if any(page.get_text("text", clip=r).strip() for r in rects)]
+                 if any(page.get_text("text", clip=r).strip() or (scanned and _ink(page, r) > 0.02) for r in rects)]
+    # (a cor de fundo é clara: "tinta" é só o que ficou abaixo de 50 % de cinza)
 
     columns = _column_bounds(jobs, page)
     originals = [pymupdf.Rect(j.layout.text_rect) for j in jobs]
@@ -538,6 +544,23 @@ def compose_page(page: pymupdf.Page, original: pymupdf.Page, jobs: list[BlockJob
         diagram_changed_pct=[_pixel_change(original, page, b) for b in boards],
         font_substitutions=sorted(substitutions), overlaps=_overlaps(outcomes), shading_removed=shading,
     )
+
+
+def _background(page: pymupdf.Page, rect: pymupdf.Rect, dpi: int = 72) -> tuple[float, float, float]:
+    """Cor do papel no retângulo: o tom claro mais comum (as letras são a minoria escura)."""
+    pix = page.get_pixmap(dpi=dpi, clip=rect, colorspace=pymupdf.csGRAY)
+    if not pix.width or not pix.height:
+        return (1.0, 1.0, 1.0)
+    level = float(np.percentile(np.frombuffer(pix.samples, dtype=np.uint8), 90)) / 255
+    return (level, level, level)
+
+
+def _ink(page: pymupdf.Page, rect: pymupdf.Rect, dpi: int = 72) -> float:
+    """Fração de pixels escuros no retângulo (o que sobrou da imagem depois da redação)."""
+    pix = page.get_pixmap(dpi=dpi, clip=rect, colorspace=pymupdf.csGRAY)
+    if not pix.width or not pix.height:
+        return 0.0
+    return float((np.frombuffer(pix.samples, dtype=np.uint8) < 128).mean())
 
 
 def _overlaps(outcomes: list[BlockOutcome], tolerance: float = 1.0) -> list[str]:

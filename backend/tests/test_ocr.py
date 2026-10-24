@@ -1,0 +1,156 @@
+"""OCR de páginas digitalizadas: hOCR, diagramas pela moldura, figurinas pela imagem, avisos e montagem."""
+
+import shutil
+
+import numpy as np
+import pymupdf
+import pytest
+
+from app.extraction import ocr
+from app.layout import assemble as asm
+from app.pipeline.notation_pass import OCR_FLAG, collect
+from app.pipeline.segments import book_segments
+from app.store.jobs import _run
+from app.store.project_store import ProjectStore
+from app.translation.engines import ENGINES, Prices
+from app.translation.providers.fake import PseudoProvider
+from scripts.evaluate_ocr import rasterize
+from tests.fixtures import synthetic as syn
+
+needs_tesseract = pytest.mark.skipif(shutil.which("tesseract") is None, reason="Tesseract não instalado")
+
+HOCR = """<html><body><div class='ocr_page'>
+<div class='ocr_carea' title="bbox 0 0 900 100"><p class='ocr_par' title="bbox 10 10 900 60">
+<span class='ocr_line' title="bbox 10 10 300 50; baseline 0 -5; x_size 40; x_descenders 8">
+ <span class='ocrx_word' title='bbox 10 10 120 50; x_wconf 91'>
+  <span class='ocrx_cinfo' title='x_bboxes 10 10 40 50; x_conf 99'>1</span><span
+   class='ocrx_cinfo' title='x_bboxes 42 10 60 50; x_conf 98'>.</span><span
+   class='ocrx_cinfo' title='x_bboxes 62 10 90 50; x_conf 70'>@</span><span
+   class='ocrx_cinfo' title='x_bboxes 92 10 120 50; x_conf 95'>e</span></span>
+ <span class='ocrx_word' title='bbox 700 10 900 50; x_wconf 40'>
+  <span class='ocrx_cinfo' title='x_bboxes 700 10 900 50; x_conf 40'>far</span></span>
+</span></p></div></div></body></html>"""
+
+
+def test_hocr_keeps_words_chars_confidence_and_splits_columns():
+    blocks = ocr.parse_hocr(HOCR)
+    word = blocks[0].lines[0].words[0]
+    assert (word.text, word.conf, word.chars[2].bbox) == ("1.@e", 91.0, (62, 10, 90, 50))
+    # o vão de 580 px entre as palavras (> 1,2 × corpo 40) é o espaço entre colunas
+    split = ocr._split_columns(blocks)
+    assert [[w.text for ln in b.lines for w in ln.words] for b in split] == [["1.@e"], ["far"]]
+
+
+@pytest.mark.parametrize("text, impossible", [
+    ("2...8c4", True), ("c62", True), ("4..4d6", True), ("Afl+", True), ("♔el", True),
+    ("2...♔c4", False), ("e4", False), ("1...b5", False),
+])
+def test_patterns_no_move_can_produce_are_flagged(text, impossible):
+    assert bool(ocr._IMPOSSIBLE_RE.match(text)) is impossible
+
+
+def _scanned(page: pymupdf.Page, noise: float = 0) -> pymupdf.Document:
+    return rasterize(page, 300, noise, np.random.default_rng(1))
+
+
+def test_scanned_page_detection():
+    digital = pymupdf.open(stream=syn.build_page("fan_unicode").pdf_bytes, filetype="pdf")
+    assert not ocr.needs_ocr(digital[0])
+    assert ocr.needs_ocr(_scanned(digital[0])[0])
+
+
+def test_board_found_by_its_frame_and_checkered_squares():
+    page = syn.build_page("fan_unicode")
+    scan = _scanned(pymupdf.open(stream=page.pdf_bytes, filetype="pdf")[0])
+    pix = scan[0].get_pixmap(dpi=300, colorspace=pymupdf.csGRAY)
+    gray = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width)
+    boards = ocr.detect_boards(gray, 300 / 72)
+    assert len(boards) == 1
+    assert all(abs(a - b) < 3 for a, b in zip(boards[0], (110, 180, 310, 380), strict=True))
+    # sem tabuleiro, nada é inventado: a mesma página com o diagrama coberto
+    gray = gray.copy()
+    x0, y0, x1, y1 = (int(v * 300 / 72) for v in (100, 170, 320, 390))
+    gray[y0:y1, x0:x1] = 255
+    assert ocr.detect_boards(gray, 300 / 72) == []
+
+
+def test_piece_drawn_as_letter_is_classified_as_that_letter():
+    doc = pymupdf.open()
+    page = doc.new_page(width=200, height=60)
+    page.insert_text((20, 40), "Nf3", fontsize=28, fontfile=str(syn.DEJAVU), fontname="dj")
+    pix = page.get_pixmap(dpi=300, colorspace=pymupdf.csGRAY)
+    gray = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width)
+    cols = np.flatnonzero((gray < 128).any(axis=0))
+    first_gap = next(i for i in range(len(cols) - 1) if cols[i + 1] - cols[i] > 1)
+    vec = ocr._normalize(gray[:, cols[0]:cols[first_gap] + 1])
+    _score, best = ocr._scores(vec)[0]
+    assert ocr.PIECE_REFS[best] == "N" and best not in ocr.WHITE_FIGURINES
+
+
+@needs_tesseract
+def test_ocr_of_synthetic_fan_page_never_leaves_a_wrong_move_unflagged():
+    """Na página sintética (FAN da DejaVu), todo lance mal lido sai com aviso de conferência."""
+    page = pymupdf.open(stream=syn.build_page("fan_unicode").pdf_bytes, filetype="pdf")[0]
+    res = ocr.ocr_page(_scanned(page)[0])
+    assert len(res.boards) == 1
+    words = [(s["text"].strip(), b["number"]) for b in res.blocks for ln in b["lines"] for s in ln["spans"]]
+    assert any("♘f3" in w for w, _ in words)  # figurina reconhecida pelo desenho
+    expected = {"2.♘f3", "♘c6", "3.♗b5", "4.♗a4", "♘f6", "4.♗xc6", "...♘f6."}
+    for text, block in words:
+        looks_like_move = any(ch in "♔♕♖♗♘" for ch in text) or ocr._IMPOSSIBLE_RE.match(text) or ocr.MOVE_RE.match(text)
+        if looks_like_move and text not in expected:
+            assert any(f"'{text}'" in n for n in res.warnings.get(block, [])), text
+    # o lance cuja figurina o OCR pulou ("...f6" no lugar de "...♘f6") pede conferência
+    para2 = next(b for b, ws in res.warnings.items() if any("f6" in n for n in ws))
+    assert any(n.startswith(("ocr_desenho_nao_lido", "ocr_baixa_confianca", "ocr_peca")) for n in res.warnings[para2])
+
+
+@needs_tesseract
+def test_scanned_book_goes_through_extraction_review_and_assembly(tmp_path, monkeypatch):
+    monkeypatch.setattr(asm, "CHUNK_PAGES", 1)
+    page = pymupdf.open(stream=syn.build_page("fan_unicode").pdf_bytes, filetype="pdf")[0]
+    pdf = tmp_path / "digitalizado.pdf"
+    _scanned(page, noise=4).save(pdf)
+    doc = pymupdf.open(pdf)
+    cache = tmp_path / "ocr.json"
+    notation = collect(doc, ocr_cache=cache)
+    assert cache.exists() and len(notation.diagrams) == 1 and notation.diagrams[0].fen is None
+    segs = book_segments(notation, "Livro")
+    assert segs and all(OCR_FLAG in s.flags for s in segs)
+    # a segunda leitura vem do cache: mesmo texto, sem chamar o Tesseract
+    monkeypatch.setattr(ocr, "run_tesseract", lambda *a, **k: pytest.fail("OCR repetido"))
+    again = collect(doc, ocr_cache=cache)
+    assert [r.resolved.text for r in again.regions] == [r.resolved.text for r in notation.regions]
+
+    store = ProjectStore.create(tmp_path / "storage", "scan", "Digitalizado", pdf, 1, notation.style)
+    store.add_book_segments([{"id": b.id, "page": b.page, "section": b.section.label, "source": b.region.resolved.text,
+                              "kind": b.kind, "bold": b.region.main_mask, "italic": b.region.italic_mask,
+                              "blocked": b.blocked, "flags": b.flags} for b in segs])
+    seg = next(s for s in store.segments() if s.status == "pending")
+    assert seg.needs_attention and OCR_FLAG in seg.source_flags
+    with store._db() as db:
+        db.execute("INSERT INTO job (engine, model, pages, state, budget, author, created_at)"
+                   " VALUES ('pseudo','pseudo','1','queued',1,'t','t')")
+    _run(store, 1, store.sources({1}), ENGINES[0], PseudoProvider(), Prices({}, "teste"))
+    store.approve(seg.id, "revisor")
+    assert not store.segment(seg.id).needs_attention  # conferido com a imagem e aprovado
+    summary = asm.assemble(store.original_path, store.export_result(), store.dir / "output", ocr_cache=cache)
+    assert summary["blocks_placed"] == summary["blocks"] > 0
+    assert summary["leftover_original"] == [] and summary["diagrams_changed"] == []
+    assert summary["diagrams_checked"] == 1
+    out = pymupdf.open(store.dir / "output" / "traduzido.pdf")
+    assert out[0].get_text().strip()  # a tradução é texto de verdade (pesquisável), sobre a imagem limpa
+
+
+def test_digital_book_with_an_image_page_is_not_read_by_ocr(monkeypatch):
+    """Num livro digital, a página só de imagem é capa ou foto: o modo automático não a lê."""
+    digital = pymupdf.open(stream=syn.build_page("fan_unicode").pdf_bytes, filetype="pdf")
+    book = pymupdf.open()
+    book.insert_pdf(digital)
+    book.insert_pdf(digital)
+    book.insert_pdf(_scanned(digital[0]))
+    assert ocr.scanned_pages(book) == [3]
+    monkeypatch.setattr(ocr, "run_tesseract", lambda *a, **k: pytest.fail("OCR num livro digital"))
+    notation = collect(book)
+    assert {r.page for r in notation.regions} == {1, 2}
+    assert ocr.document_ocr(book, mode="off") == {}

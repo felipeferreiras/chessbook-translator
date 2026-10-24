@@ -21,6 +21,7 @@ export interface Segment {
   approved: boolean;
   current: Version | null;
   machine_problems: string[];
+  source_flags: string[];
   needs_attention: boolean;
 }
 
@@ -41,6 +42,8 @@ export interface Project {
   approved: number;
   segments: number;
   has_translated_pdf: boolean;
+  spent: number;
+  spend_limit: number | null;
 }
 
 export interface GlossaryEntry {
@@ -79,10 +82,25 @@ export interface EngineEstimate {
 export interface EstimateResponse {
   pages: number;
   segments: number;
+  mode: string;
   already_translated: number;
   notation_only: number;
   pending: number;
+  selected: number;
+  skipped: Record<string, number>;
+  spent: number;
+  spend_limit: number | null;
+  remaining: number | null;
   estimates: EngineEstimate[];
+}
+
+/** O que traduzir: páginas e modo (ver ``MODES`` no backend). */
+export interface Selection {
+  pages: string;
+  mode: string;
+  segment_ids?: string[];
+  fresh?: boolean;
+  resume_of?: number;
 }
 
 export interface Job {
@@ -103,6 +121,11 @@ export interface Job {
   author: string;
   created_at: string;
   finished_at: string | null;
+  mode: string;
+  segment_ids: string[] | null;
+  fresh: boolean;
+  heartbeat_at: string | null;
+  resumed_from: number | null;
 }
 
 export interface QualityPage {
@@ -120,6 +143,20 @@ export interface Quality {
   pages_total: number;
   pages: QualityPage[];
   assembled_at: string;
+}
+
+export interface Assembly {
+  id: number;
+  state: "running" | "done" | "failed" | "cancelled" | "interrupted";
+  author: string;
+  created_at: string;
+  finished_at: string | null;
+  error: string | null;
+  summary: { blocks: number; blocks_placed: number; chunks: number; chunks_reused: number; pages_ok: number;
+             pages: number } | null;
+  progress: { pages_total: number; pages_done: number; chunks_total: number; chunks_done: number;
+              chunks_reused: number } | null;
+  outdated: boolean;
 }
 
 /** Erro da API com os motivos que o backend devolveu (ex.: notação alterada). */
@@ -169,13 +206,25 @@ export const api = {
   glossary: (id: string) => call<GlossaryEntry[]>(`${p(id)}/glossary`),
   setGlossary: (id: string, entry: Omit<GlossaryEntry, "source">, author: string) =>
     call<{ ok: boolean }>(`${p(id)}/glossary`, { method: "PUT", body: JSON.stringify({ ...entry, author }) }),
-  estimate: (id: string, pages: string) =>
-    call<EstimateResponse>(`${p(id)}/estimate`, { method: "POST", body: JSON.stringify({ pages }) }),
+  modes: () => call<Record<string, string>>("/modes"),
+  estimate: (id: string, sel: Selection) =>
+    call<EstimateResponse>(`${p(id)}/estimate`, { method: "POST", body: JSON.stringify(sel) }),
   jobs: (id: string) => call<Job[]>(`${p(id)}/jobs`),
-  startJob: (id: string, engine: string, pages: string, budget: number, author: string) =>
-    call<Job>(`${p(id)}/jobs`, { method: "POST", body: JSON.stringify({ engine, pages, budget, author }) }),
+  startJob: (id: string, engine: string, sel: Selection, budget: number, author: string) =>
+    call<Job>(`${p(id)}/jobs`, { method: "POST", body: JSON.stringify({ ...sel, engine, budget, author }) }),
+  resumeJob: (id: string, job: number, author: string, budget?: number) =>
+    call<Job>(`${p(id)}/jobs/${job}/resume`, { method: "POST", body: JSON.stringify({ author, budget }) }),
+  setLimit: (id: string, spend_limit: number | null, author: string) =>
+    call<{ spent: number; spend_limit: number | null }>(`${p(id)}/limits`, {
+      method: "PUT",
+      body: JSON.stringify({ spend_limit, author }),
+    }),
   cancelJob: (id: string, job: number) => call<Job>(`${p(id)}/jobs/${job}/cancel`, { method: "POST" }),
   quality: (id: string) => call<Quality>(`${p(id)}/quality`),
+  assembly: (id: string) => call<Assembly | null>(`${p(id)}/assembly`),
+  assemble: (id: string, author: string) =>
+    call<Assembly>(`${p(id)}/assembly`, { method: "POST", body: JSON.stringify({ author }) }),
+  cancelAssembly: (id: string) => call<Assembly | null>(`${p(id)}/assembly/cancel`, { method: "POST" }),
   pageImage: (id: string, page: number, which: "original" | "translated") =>
     `/api${p(id)}/pages/${page}/image?which=${which}`,
 };

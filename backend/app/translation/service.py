@@ -139,7 +139,9 @@ def translate(
     cache: TranslationCache | None = None,
     max_chars: int = 6000,
     max_segments: int = 20,
+    cache_read: bool = True,
 ) -> TranslationRun:
+    """Traduz os segmentos. ``cache_read=False`` pede uma tradução nova mesmo havendo uma no cache (que é atualizado)."""
     protected: dict[str, Protected] = {}
     results: dict[str, SegmentResult] = {}
     pending: list[Segment] = []
@@ -153,7 +155,7 @@ def translate(
             base.text = src.text
             results[src.id] = base
             continue
-        if cache is not None:
+        if cache is not None and cache_read:
             hit = cache.get(cache_key(provider.name, provider.model, system, seg, section, glossary))
             # Uma tradução em cache que não passa nas regras atuais é reenviada.
             if hit is not None and _accept(base, hit, prot, SegmentStatus.CACHED, provider, glossary):
@@ -179,8 +181,8 @@ def translate(
             for s in batch:
                 results[s.id].status, results[s.id].problems = SegmentStatus.FAILED, [str(exc)]
             return None
-        except ProviderError as exc:
-            calls.append(CallRecord(provider.name, provider.model, len(batch), Usage(), str(exc)))
+        except ProviderError as exc:  # uma resposta inútil também é cobrada: os tokens dela entram na conta
+            calls.append(CallRecord(provider.name, provider.model, len(batch), exc.usage or Usage(), str(exc)))
             failures["consecutive"] += 1
             failures["last"] = str(exc)
             return None

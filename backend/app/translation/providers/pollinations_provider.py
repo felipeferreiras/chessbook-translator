@@ -87,19 +87,25 @@ class PollinationsProvider:
             raise ProviderRefusal(f"o modelo recusou o pedido: {message.refusal}")
         if choice.finish_reason == "content_filter":
             raise ProviderRefusal("resposta bloqueada por filtro de conteúdo")
-        if choice.finish_reason == "length":
-            raise ProviderError("resposta cortada por limite de tokens; reduza o lote")
-        raw = message.content or ""
         usage = response.usage
         details = getattr(usage, "prompt_tokens_details", None) if usage else None
+        billed = Usage(
+            usage.prompt_tokens if usage else None,
+            usage.completion_tokens if usage else None,
+            getattr(details, "cached_tokens", None) if details else None,
+        )
+        if choice.finish_reason == "length":
+            raise ProviderError("resposta cortada por limite de tokens; reduza o lote", billed)
+        raw = message.content or ""
+        try:
+            translations = parse_output(raw, [s.id for s in request.segments])
+        except ProviderError as exc:
+            exc.usage = billed
+            raise
         return BatchResult(
-            translations=parse_output(raw, [s.id for s in request.segments]),
+            translations=translations,
             provider=self.name,
             model=response.model or self.model,
-            usage=Usage(
-                usage.prompt_tokens if usage else None,
-                usage.completion_tokens if usage else None,
-                getattr(details, "cached_tokens", None) if details else None,
-            ),
+            usage=billed,
             raw_text=raw,
         )

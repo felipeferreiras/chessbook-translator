@@ -20,31 +20,35 @@ import sqlite3
 import stat
 from collections.abc import Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
 from app.chess.notation.lexer import LexStyle
 from app.translation.glossary import Glossary, GlossaryEntry
 from app.translation.guard import GuardViolation, mask_edit, protect, restore
+from app.translation.prompt import glossary_signature
 from app.translation.service import SourceSegment, _needs_translation
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS project (
     id TEXT PRIMARY KEY, name TEXT NOT NULL, original_name TEXT NOT NULL, sha256 TEXT NOT NULL,
-    pages INTEGER NOT NULL, style_json TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL
+    pages INTEGER NOT NULL, style_json TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL,
+    spend_limit REAL
 );
 CREATE TABLE IF NOT EXISTS segment (
     id TEXT PRIMARY KEY, page INTEGER NOT NULL, ordinal INTEGER NOT NULL, section TEXT NOT NULL DEFAULT '',
     source TEXT NOT NULL, bold_json TEXT NOT NULL DEFAULT '[]', italic_json TEXT NOT NULL DEFAULT '[]',
     status TEXT NOT NULL, current_version INTEGER, approved INTEGER NOT NULL DEFAULT 0,
     kind TEXT NOT NULL DEFAULT 'paragraph',
-    machine_problems_json TEXT NOT NULL DEFAULT '[]'
+    machine_problems_json TEXT NOT NULL DEFAULT '[]',
+    source_flags_json TEXT NOT NULL DEFAULT '[]'
 );
 CREATE TABLE IF NOT EXISTS translation (
     segment_id TEXT NOT NULL REFERENCES segment(id), version INTEGER NOT NULL, kind TEXT NOT NULL,
     text TEXT NOT NULL, masked TEXT NOT NULL, warnings_json TEXT NOT NULL DEFAULT '[]',
     provider TEXT NOT NULL DEFAULT '', model TEXT NOT NULL DEFAULT '', author TEXT NOT NULL, created_at TEXT NOT NULL,
+    glossary_sig TEXT,
     PRIMARY KEY (segment_id, version)
 );
 CREATE TABLE IF NOT EXISTS revision (
@@ -56,11 +60,45 @@ CREATE TABLE IF NOT EXISTS job (
     state TEXT NOT NULL, total INTEGER NOT NULL DEFAULT 0, done INTEGER NOT NULL DEFAULT 0,
     tokens_in INTEGER NOT NULL DEFAULT 0, tokens_out INTEGER NOT NULL DEFAULT 0, cost REAL NOT NULL DEFAULT 0,
     estimate REAL, budget REAL NOT NULL, counts_json TEXT NOT NULL DEFAULT '{}', error TEXT,
-    author TEXT NOT NULL, created_at TEXT NOT NULL, finished_at TEXT
+    author TEXT NOT NULL, created_at TEXT NOT NULL, finished_at TEXT,
+    mode TEXT NOT NULL DEFAULT 'pending', segment_ids_json TEXT NOT NULL DEFAULT '[]', fresh INTEGER NOT NULL DEFAULT 0,
+    runner TEXT, heartbeat_at TEXT, resumed_from INTEGER
+);
+CREATE TABLE IF NOT EXISTS job_segment (
+    job_id INTEGER NOT NULL REFERENCES job(id), segment_id TEXT NOT NULL, outcome TEXT NOT NULL,
+    PRIMARY KEY (job_id, segment_id)
+);
+CREATE TABLE IF NOT EXISTS assembly (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, state TEXT NOT NULL, pid INTEGER, author TEXT NOT NULL,
+    created_at TEXT NOT NULL, finished_at TEXT, error TEXT, summary_json TEXT
 );
 CREATE INDEX IF NOT EXISTS segment_page ON segment(page, ordinal);
 CREATE INDEX IF NOT EXISTS revision_entity ON revision(entity, entity_id);
 """
+
+
+# Colunas acrescentadas depois da criação de projetos existentes: (tabela, coluna, declaração).
+_MIGRATIONS = (
+    ("segment", "kind", "TEXT NOT NULL DEFAULT 'paragraph'"),
+    ("segment", "source_flags_json", "TEXT NOT NULL DEFAULT '[]'"),
+    ("translation", "glossary_sig", "TEXT"),
+    ("project", "spend_limit", "REAL"),
+    ("job", "mode", "TEXT NOT NULL DEFAULT 'pending'"),
+    ("job", "segment_ids_json", "TEXT NOT NULL DEFAULT '[]'"),
+    ("job", "fresh", "INTEGER NOT NULL DEFAULT 0"),
+    ("job", "runner", "TEXT"),
+    ("job", "heartbeat_at", "TEXT"),
+    ("job", "resumed_from", "INTEGER"),
+)
+
+# O que retraduzir (``select_sources``). Uma versão humana nunca entra: a tradução nova não a substituiria.
+MODES = {
+    "pending": "sem tradução ainda",
+    "problems": "recusados pela proteção, falhas do provedor ou glossário contrariado",
+    "glossary": "traduzidos com termos do glossário que mudaram depois",
+    "machine": "toda tradução automática (por exemplo, para trocar de motor)",
+    "ids": "segmentos escolhidos",
+}
 
 
 class StoreError(ValueError):
@@ -102,11 +140,15 @@ class SegmentView:
     approved: bool
     current: Version | None
     machine_problems: list[str]
+    source_flags: list[str] = field(default_factory=list)  # dúvidas sobre o texto de origem (OCR)
 
     @property
     def needs_attention(self) -> bool:
-        """Precisa de olhos humanos: falhou, a proteção recusou, ou o glossário foi contrariado."""
+        """Precisa de olhos humanos: falhou, a proteção recusou, o glossário foi contrariado,
+        ou o texto de origem veio do OCR e ainda não foi conferido (aprovado)."""
         if self.status in ("needs_review", "failed", "blocked"):
+            return True
+        if self.source_flags and not self.approved:
             return True
         return bool(self.current and any(w.startswith("glossario_evitar:") for w in self.current.warnings))
 
@@ -121,9 +163,9 @@ class ProjectStore:
             raise StoreError(f"projeto inexistente: {project_id}")
         with self._db() as db:  # projetos criados antes de colunas/tabelas novas
             db.executescript(SCHEMA)
-            columns = {r["name"] for r in db.execute("PRAGMA table_info(segment)")}
-            if "kind" not in columns:
-                db.execute("ALTER TABLE segment ADD COLUMN kind TEXT NOT NULL DEFAULT 'paragraph'")
+            for table, column, decl in _MIGRATIONS:
+                if column not in {r["name"] for r in db.execute(f"PRAGMA table_info({table})")}:
+                    db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
 
     # --- criação ---------------------------------------------------------
     @classmethod
@@ -143,7 +185,8 @@ class ProjectStore:
             raise StoreError("a cópia do original não confere com o arquivo de origem")
         with sqlite3.connect(pdir / "app.db") as db:
             db.executescript(SCHEMA)
-            db.execute("INSERT INTO project VALUES (?,?,?,?,?,?,?)",
+            db.execute("INSERT INTO project (id, name, original_name, sha256, pages, style_json, created_at)"
+                       " VALUES (?,?,?,?,?,?,?)",
                        (project_id, name, pdf.name, digest, pages, json.dumps((style or LexStyle()).__dict__), _now()))
         return cls(root, project_id)
 
@@ -177,7 +220,7 @@ class ProjectStore:
 
     # --- importação da tradução automática -------------------------------
     def add_book_segments(self, segments: list[dict]) -> int:
-        """Todos os segmentos do livro, pendentes: {id, page, section, source, kind, bold, italic}."""
+        """Todos os segmentos do livro, pendentes: {id, page, section, source, kind, bold, italic, blocked, flags}."""
         added = 0
         style = self.style
         with self._db() as db:
@@ -189,10 +232,10 @@ class ProjectStore:
                     status, problems = "blocked", [seg["blocked"]]
                 cur = db.execute(
                     "INSERT OR IGNORE INTO segment (id, page, ordinal, section, source, bold_json, italic_json, status,"
-                    " kind, machine_problems_json) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    " kind, machine_problems_json, source_flags_json) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                     (seg["id"], seg["page"], ordinal, seg.get("section", ""), seg["source"],
                      json.dumps(list(seg.get("bold", []))), json.dumps(list(seg.get("italic", []))), status,
-                     seg.get("kind", "paragraph"), json.dumps(problems)))
+                     seg.get("kind", "paragraph"), json.dumps(problems), json.dumps(list(seg.get("flags", [])))))
                 added += cur.rowcount
         return added
 
@@ -200,7 +243,8 @@ class ProjectStore:
         """Registra o resultado da tradução automática de um segmento existente.
 
         Uma edição humana nunca é sobrescrita: se a versão atual for de pessoa,
-        a tradução nova não é gravada. Devolve o que aconteceu.
+        a tradução nova não é gravada. Numa retradução que falha, a tradução
+        anterior continua valendo (``retry_failed``). Devolve o que aconteceu.
         """
         row = db.execute("SELECT current_version FROM segment WHERE id=?", (seg["id"],)).fetchone()
         if row is None:
@@ -210,11 +254,13 @@ class ProjectStore:
                               (seg["id"], row["current_version"])).fetchone()["kind"]
             if kind != "machine":
                 return "kept_human"
+            if seg["status"] not in ("translated", "cached"):
+                return "retry_failed"
         db.execute("UPDATE segment SET status=?, machine_problems_json=? WHERE id=?",
                    (seg["status"], json.dumps(seg.get("problems", [])), seg["id"]))
         if seg["status"] in ("translated", "cached") and seg.get("raw_translation"):
             self._add_version(db, seg["id"], "machine", seg["text"], seg["raw_translation"], seg.get("warnings", []),
-                              author, seg.get("provider", ""), seg.get("model", ""))
+                              author, seg.get("provider", ""), seg.get("model", ""), seg.get("glossary_sig"))
             return "translated"
         return seg["status"]
 
@@ -235,11 +281,14 @@ class ProjectStore:
         return imported
 
     def _add_version(self, db: sqlite3.Connection, segment_id: str, kind: str, text: str, masked: str,
-                     warnings: list[str], author: str, provider: str = "", model: str = "") -> int:
+                     warnings: list[str], author: str, provider: str = "", model: str = "",
+                     glossary_sig: str | None = None) -> int:
         row = db.execute("SELECT MAX(version) FROM translation WHERE segment_id=?", (segment_id,)).fetchone()
         version = (row[0] or 0) + 1
-        db.execute("INSERT INTO translation VALUES (?,?,?,?,?,?,?,?,?,?)",
-                   (segment_id, version, kind, text, masked, json.dumps(warnings), provider, model, author, _now()))
+        db.execute("INSERT INTO translation (segment_id, version, kind, text, masked, warnings_json, provider, model,"
+                   " author, created_at, glossary_sig) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                   (segment_id, version, kind, text, masked, json.dumps(warnings), provider, model, author, _now(),
+                    glossary_sig))
         db.execute("UPDATE segment SET current_version=?, approved=0 WHERE id=?", (version, segment_id))
         return version
 
@@ -257,7 +306,8 @@ class ProjectStore:
             current = Version(v["version"], v["kind"], v["text"], json.loads(v["warnings_json"]), v["author"],
                               v["created_at"], v["provider"], v["model"])
         return SegmentView(row["id"], row["page"], row["ordinal"], row["section"], row["source"], row["status"],
-                           bool(row["approved"]), current, json.loads(row["machine_problems_json"]))
+                           bool(row["approved"]), current, json.loads(row["machine_problems_json"]),
+                           json.loads(row["source_flags_json"]))
 
     def segments(self, page: int | None = None) -> list[SegmentView]:
         with self._db() as db:
@@ -294,6 +344,78 @@ class ProjectStore:
                                                     bold=tuple(json.loads(r["bold_json"])),
                                                     italic=tuple(json.loads(r["italic_json"])))))
         return out
+
+    def select_sources(self, pages: set[int], mode: str = "pending", ids: frozenset[str] = frozenset(),
+                       exclude: frozenset[str] = frozenset()) -> tuple[list[tuple[str, SourceSegment]], dict]:
+        """Segmentos a (re)traduzir conforme ``mode`` (ver ``MODES``), em ordem, e o que ficou de fora.
+
+        ``exclude``: já tratados por uma tarefa anterior (retomada). Só de
+        notação, bloqueados e versões humanas nunca entram.
+        """
+        if mode not in MODES:
+            raise StoreError(f"modo desconhecido: {mode}")
+        if mode == "ids" and not ids:
+            raise StoreError("nenhum segmento escolhido")
+        if mode == "pending":
+            items = [x for x in self.sources(pages) if x[1].id not in exclude]
+            return items, {}
+        glossary = self.glossary() if mode == "glossary" else None
+        style = self.style
+        skipped = {"human": 0, "not_needed": 0, "blocked": 0, "no_glossary_record": 0}
+        out = []
+        with self._db() as db:
+            rows = db.execute("SELECT s.*, t.kind AS vkind, t.warnings_json, t.glossary_sig FROM segment s"
+                              " LEFT JOIN translation t ON t.segment_id = s.id AND t.version = s.current_version"
+                              " ORDER BY s.ordinal").fetchall()
+        for r in rows:
+            if (r["page"] not in pages and mode != "ids") or r["id"] in exclude:
+                continue
+            if mode == "ids" and r["id"] not in ids:
+                continue
+            if r["status"] in ("not_needed", "blocked"):
+                skipped[r["status"]] += 1
+                continue
+            if r["vkind"] not in (None, "machine"):
+                skipped["human"] += 1
+                continue
+            if mode == "problems":
+                avoid = r["warnings_json"] and any(w.startswith("glossario_evitar:") for w in json.loads(r["warnings_json"]))
+                if r["status"] not in ("needs_review", "failed") and not avoid:
+                    continue
+            elif mode in ("glossary", "machine"):
+                if r["vkind"] != "machine":
+                    continue
+                if mode == "glossary":
+                    if r["glossary_sig"] is None:  # traduzido antes do registro: não dá para saber
+                        skipped["no_glossary_record"] += 1
+                        continue
+                    masked = protect(r["source"], style, json.loads(r["bold_json"]), json.loads(r["italic_json"])).masked
+                    if glossary_signature(masked, glossary) == r["glossary_sig"]:
+                        continue
+            out.append((r["section"], SourceSegment(r["id"], r["source"], kind=r["kind"],
+                                                    bold=tuple(json.loads(r["bold_json"])),
+                                                    italic=tuple(json.loads(r["italic_json"])))))
+        return out, {k: v for k, v in skipped.items() if v}
+
+    # --- gastos ------------------------------------------------------------------
+    def spent(self) -> float:
+        """Soma do custo real de todas as tarefas do projeto (pollen)."""
+        with self._db() as db:
+            return round(db.execute("SELECT COALESCE(SUM(cost), 0) FROM job").fetchone()[0], 5)
+
+    @property
+    def spend_limit(self) -> float | None:
+        return self.info.get("spend_limit")
+
+    def set_spend_limit(self, limit: float | None, author: str) -> None:
+        """Teto de gasto do projeto inteiro (None: sem teto). Cada tarefa fica limitada ao que sobra."""
+        if limit is not None and limit < 0:
+            raise StoreError("o teto não pode ser negativo")
+        old = self.spend_limit
+        with self._db() as db:
+            db.execute("UPDATE project SET spend_limit=?", (limit,))
+            self._log(db, "project", self.id, "spend_limit", None if old is None else str(old),
+                      None if limit is None else str(limit), author)
 
     def history(self, segment_id: str) -> list[Version]:
         with self._db() as db:

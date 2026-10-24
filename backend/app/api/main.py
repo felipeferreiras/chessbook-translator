@@ -24,8 +24,9 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from app.pipeline.segments import parse_pages
+from app.store import assembly as assembler
 from app.store import jobs as job_runner
-from app.store.project_store import GuardViolation, ProjectStore, SegmentView, StoreError
+from app.store.project_store import MODES, GuardViolation, ProjectStore, SegmentView, StoreError
 from app.translation.cache import TranslationCache
 from app.translation.config import load_env_file, provider_from_env
 from app.translation.engines import ENGINES, Engine, Prices, estimate, group_by_section, load_prices
@@ -122,7 +123,8 @@ def project(project_id: str) -> dict:
     return {**store.info, "original_ok": store.verify_original(), "pages_with_segments": store.pages(),
             "attention": [s.id for s in segs if s.needs_attention],
             "approved": sum(s.approved for s in segs), "segments": len(segs),
-            "has_translated_pdf": (store.dir / "output" / "traduzido.pdf").exists()}
+            "has_translated_pdf": (store.dir / "output" / "traduzido.pdf").exists(),
+            "spent": store.spent(), "spend_limit": store.spend_limit}
 
 
 @app.get("/api/projects/{project_id}/pages/{page}/segments")
@@ -242,14 +244,33 @@ def quality(project_id: str) -> dict:
             "assembled_at": datetime.fromtimestamp(path.stat().st_mtime, UTC).isoformat(timespec="seconds")}
 
 
-class PagesIn(BaseModel):
+class Selection(BaseModel):
+    """O que traduzir: páginas e modo (``MODES``); ``segment_ids`` só no modo ``ids``."""
+
     pages: str = Field(min_length=1, max_length=400)
+    mode: str = "pending"
+    segment_ids: list[str] = Field(default=[], max_length=5000)
+    fresh: bool = False  # ignora o cache: pede uma tradução nova ao motor
+    resume_of: int | None = None  # previsão da retomada de uma tarefa
 
 
-class JobIn(BaseModel):
+class PagesIn(Selection):
+    pass
+
+
+class JobIn(Selection):
     engine: str
-    pages: str = Field(min_length=1, max_length=400)
     budget: float = Field(gt=0, le=1000)
+    author: str = Field(min_length=1, max_length=80)
+
+
+class ResumeIn(BaseModel):
+    author: str = Field(min_length=1, max_length=80)
+    budget: float | None = Field(default=None, gt=0, le=1000)
+
+
+class LimitIn(BaseModel):
+    spend_limit: float | None = Field(default=None, ge=0, le=100_000)
     author: str = Field(min_length=1, max_length=80)
 
 
@@ -260,10 +281,28 @@ def _pages(store: ProjectStore, spec: str) -> set[int]:
         raise HTTPException(400, str(exc)) from exc
 
 
-def _estimates(store: ProjectStore, pages: set[int], engines: tuple[Engine, ...]) -> list[dict]:
-    groups = group_by_section(store.sources(pages))
+def _selection(store: ProjectStore, body: Selection) -> tuple[set[int], str, frozenset[str], frozenset[str], bool]:
+    """(páginas, modo, ids, segmentos a pular, ignorar cache) validados."""
+    if body.resume_of is not None:
+        try:
+            old, pages, exclude = job_runner.resume_plan(store, body.resume_of)
+        except StoreError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        return pages, old.mode, frozenset(old.segment_ids or ()), exclude, old.fresh
+    if body.mode not in MODES:
+        raise HTTPException(400, f"modo desconhecido: {body.mode}")
+    ids = frozenset(_segment_id(i) for i in body.segment_ids)
+    if body.mode == "ids" and not ids:
+        raise HTTPException(400, "nenhum segmento escolhido")
+    pages = _pages(store, body.pages)
+    return pages, body.mode, ids, frozenset(), body.fresh
+
+
+def _estimates(store: ProjectStore, items: list, engines: tuple[Engine, ...], fresh: bool = False) -> list[dict]:
+    groups = group_by_section(items)
     table = prices()
-    glossary, style, cache = store.glossary(), store.style, TranslationCache(store.dir / "cache.sqlite")
+    glossary, style = store.glossary(), store.style
+    cache = None if fresh else TranslationCache(store.dir / "cache.sqlite")
     out = []
     for eng in engines:
         e = estimate(groups, glossary, eng, table, style, cache)
@@ -282,16 +321,29 @@ def engines() -> list[dict]:
     return [{"id": e.id, "label": e.label, "model": e.model, "status": e.status, "note": e.note} for e in ENGINES]
 
 
+@app.get("/api/modes")
+def modes() -> dict:
+    return MODES
+
+
 @app.post("/api/projects/{project_id}/estimate")
 def estimate_cost(project_id: str, body: PagesIn) -> dict:
-    """Previsão de custo e tempo de cada motor para as páginas, antes de traduzir."""
+    """Previsão de custo e tempo de cada motor para a seleção, antes de traduzir."""
     store = _store(project_id)
-    pages = _pages(store, body.pages)
+    pages, mode, ids, exclude, fresh = _selection(store, body)
+    try:
+        items, skipped = store.select_sources(pages, mode, ids, exclude)
+    except StoreError as exc:
+        raise HTTPException(400, str(exc)) from exc
     in_pages = [s for s in store.segments() if s.page in pages]
-    return {"pages": len(pages), "segments": len(in_pages),
+    limit = store.spend_limit
+    return {"pages": len(pages), "segments": len(in_pages), "mode": mode,
             "already_translated": sum(s.current is not None for s in in_pages),
             "notation_only": sum(s.status == "not_needed" for s in in_pages),
-            "pending": len(store.sources(pages)), "estimates": _estimates(store, pages, ENGINES)}
+            "pending": len(store.sources(pages)), "selected": len(items), "skipped": skipped,
+            "spent": store.spent(), "spend_limit": limit,
+            "remaining": None if limit is None else round(limit - store.spent(), 5),
+            "estimates": _estimates(store, items, ENGINES, fresh)}
 
 
 @app.get("/api/projects/{project_id}/jobs")
@@ -307,18 +359,72 @@ def start_job(project_id: str, body: JobIn) -> dict:
         eng = engine_by_id(body.engine)
     except KeyError as exc:
         raise HTTPException(400, str(exc)) from exc
-    pages = _pages(store, body.pages)
+    body.resume_of = None
+    pages, mode, ids, _, fresh = _selection(store, body)
     try:
         provider = provider_for(eng)
     except ConfigurationError as exc:
         raise HTTPException(400, f"motor não configurado: {exc}") from exc
-    predicted = _estimates(store, pages, (eng,))[0]["cost"]
     try:
+        items, _ = store.select_sources(pages, mode, ids)
+        predicted = _estimates(store, items, (eng,), fresh)[0]["cost"]
         job = job_runner.start_job(store, eng, pages, body.pages, body.budget, body.author, provider, prices(),
-                                   estimate=predicted)
+                                   estimate=predicted, mode=mode, ids=ids, fresh=fresh)
     except StoreError as exc:
         raise HTTPException(409, str(exc)) from exc
     return asdict(job)
+
+
+@app.post("/api/projects/{project_id}/jobs/{job_id}/resume")
+def resume_job(project_id: str, job_id: int, body: ResumeIn) -> dict:
+    """Continua uma tarefa interrompida, cancelada ou parada pelo teto, sem repetir o que ela já tratou."""
+    store = _store(project_id)
+    try:
+        old, pages, exclude = job_runner.resume_plan(store, job_id)
+        eng = engine_by_id(old.engine)
+        provider = provider_for(eng)
+        items, _ = store.select_sources(pages, old.mode, frozenset(old.segment_ids or ()), exclude)
+        predicted = _estimates(store, items, (eng,), old.fresh)[0]["cost"]
+        job = job_runner.resume_job(store, job_id, body.author, provider, prices(), eng, body.budget, predicted)
+    except ConfigurationError as exc:
+        raise HTTPException(400, f"motor não configurado: {exc}") from exc
+    except (StoreError, KeyError) as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return asdict(job)
+
+
+class AuthorIn(BaseModel):
+    author: str = Field(min_length=1, max_length=80)
+
+
+@app.get("/api/projects/{project_id}/assembly")
+def assembly_status(project_id: str) -> dict | None:
+    """Última montagem do PDF traduzido: estado, andamento e se já há edições depois dela."""
+    current = assembler.latest(_store(project_id))
+    return asdict(current) if current else None
+
+
+@app.post("/api/projects/{project_id}/assembly")
+def start_assembly(project_id: str, body: AuthorIn) -> dict:
+    """Monta o PDF com o texto atual; refaz só as partes de 20 páginas que mudaram."""
+    try:
+        return asdict(assembler.start(_store(project_id), body.author))
+    except StoreError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@app.post("/api/projects/{project_id}/assembly/cancel")
+def cancel_assembly(project_id: str) -> dict | None:
+    current = assembler.cancel(_store(project_id))
+    return asdict(current) if current else None
+
+
+@app.put("/api/projects/{project_id}/limits")
+def set_limits(project_id: str, body: LimitIn) -> dict:
+    """Teto de gasto do projeto inteiro (``null``: sem teto)."""
+    store = _store(project_id)
+    store.set_spend_limit(body.spend_limit, body.author)
+    return {"spent": store.spent(), "spend_limit": store.spend_limit}
 
 
 @app.post("/api/projects/{project_id}/jobs/{job_id}/cancel")

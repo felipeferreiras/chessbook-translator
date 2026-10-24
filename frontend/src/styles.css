@@ -137,3 +137,8 @@ button.primary { background: var(--accent); color: var(--panel); border-color: v
   .images, .columns { grid-template-columns: 1fr; }
   .author { margin-left: 0; }
 }
+.budget-line { margin-bottom: 10px; }
+.assembly { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin: 10px 0 14px; }
+.assembly progress { width: 100%; margin: 8px 0 2px; }
+.source-flags { margin: 8px 0 0; font-size: 13px; color: var(--bad); }
+.source-flags ul { margin: 4px 0 0; padding-left: 18px; color: var(--muted); }

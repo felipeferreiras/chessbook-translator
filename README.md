@@ -29,7 +29,7 @@ Requisitos: Python 3.12+, [uv](https://docs.astral.sh/uv/), fonte DejaVu Sans
 cd backend
 uv venv .venv
 uv pip install --python .venv/bin/python -e ".[dev,spike]"   # inclui os SDKs de Claude, OpenAI e Gemini
-.venv/bin/python -m pytest -q        # 246 testes
+.venv/bin/python -m pytest -q        # 275 testes
 .venv/bin/ruff check app tests scripts ../spikes
 ```
 
@@ -65,23 +65,28 @@ cd backend
 export CHESSBOOK_STORAGE=/fora/do/repositorio/projetos   # contém o livro e a tradução
 .venv/bin/python -m scripts.project create meu-livro "Meu livro" LIVRO.pdf
 .venv/bin/python -m scripts.project import meu-livro SAÍDA_TRAD
-.venv/bin/python -m scripts.project assemble meu-livro      # PDF traduzido para ver lado a lado
+.venv/bin/python -m scripts.project assemble meu-livro      # ou pela interface (aba Qualidade)
 (cd ../frontend && npm install && npm run build)
 .venv/bin/uvicorn app.api.main:app --host 127.0.0.1 --port 8000   # abrir http://127.0.0.1:8000
 ```
 
-Na aba **Traduzir**: escolha as páginas, veja a previsão de custo e tempo de cada motor (Sonnet 5.5, Opus 5.5, Gemini 3.8 Flash, GPT-5.5, GPT-5.4 Nano, Qwen 3.8 27B), marque um, defina o teto de gasto e inicie (`docs/research/11-motores-custo.md`). Na aba **Páginas**: cada parágrafo com o original e a tradução editável; salvar
+Na aba **Traduzir**: escolha as páginas e o que traduzir (pendentes, com problemas, afetados pelo glossário, toda tradução automática ou parágrafos escolhidos), veja a previsão de custo e tempo de cada motor (Sonnet 5.5, Opus 5.5, Gemini 3.8 Flash, GPT-5.5, GPT-5.4 Nano, Qwen 3.8 27B), marque um, defina o teto de gasto e inicie (`docs/research/11-motores-custo.md`). Há um teto opcional para o projeto inteiro; tarefas interrompidas (servidor encerrado, cancelamento, teto) têm o botão "Retomar…". Na aba **Qualidade**: "Montar PDF traduzido" (só as partes de 20 páginas com texto alterado são refeitas) e as pendências de cada página. Na aba **Páginas**: cada parágrafo com o original e a tradução editável; salvar
 cria uma versão nova (a edição é recusada se algum lance, casa, número ou
-símbolo mudar); aprovar; histórico com volta a qualquer versão; glossário do
-projeto. Depois da revisão, `scripts.project assemble` monta o PDF com o texto
-revisado.
+símbolo mudar); aprovar; histórico com volta a qualquer versão; "Retraduzir…"
+com previsão de custo; glossário do projeto.
+
+**Livros digitalizados**: `scripts.project create` passa pelo OCR (Tesseract)
+as páginas que só têm imagem quando a maioria do livro é digitalizada (`--ocr
+on` força), com as figurinas reconhecidas pelo desenho, e guarda o resultado no
+projeto. Todo parágrafo vindo do OCR pede conferência
+com a página original antes da aprovação (`docs/research/13-fase6.md`).
 
 ## Documentação
 
 * `docs/research/` — ambiente, repositórios e licenças, spike de PDF, estratégia FAN, amostra, tradução, montagem do PDF, relatório da POC
 * `docs/architecture/01-arquitetura.md` — módulos, IR, modelo de dados, pipeline, privacidade, riscos
 * `docs/architecture/02-traducao.md` — provedores, o que é enviado, garantias, custo
-* `docs/decisions/` — ADRs 0001–0006
+* `docs/decisions/` — ADRs 0001–0007
 * `docs/quality/` — critérios de aceitação, plano de testes, definição da POC
 * `docs/plano-execucao.md` — próximas fases por prioridade
 * `LICENSES.md` — licenças de terceiros e implicações

@@ -12,7 +12,15 @@ from typing import Protocol
 
 
 class ProviderError(RuntimeError):
-    """Falha do provedor (rede, autenticação, cota, resposta inválida)."""
+    """Falha do provedor (rede, autenticação, cota, resposta inválida).
+
+    ``usage``: tokens de uma resposta que chegou mas não serviu (cortada, JSON
+    inválido). Foram cobrados e entram no custo da tarefa.
+    """
+
+    def __init__(self, message: str, usage: Usage | None = None):
+        super().__init__(message)
+        self.usage = usage
 
 
 class ProviderRefusal(ProviderError):
