@@ -17,7 +17,7 @@ conforto de uso**.
 | ✅ | 2e | Relatório P1–P11 (`scripts/poc_report.py`, `docs/research/08-relatorio-poc.md`): P1–P8, P10, P11 atendidos; página de revisão lado a lado gerada; P9 **aprovado pelo usuário em 2026-10-23** | 2a–2d |
 | ✅ | 3 | Notação (encadeamento entre parágrafos e diagramas, figurinas de peão, PGN por diagrama, probe com mais referências, sinais de fonte/ToUnicode, Type 3 — `docs/research/09-encadeamento.md`): probe de glifos com mais referências, sinais de fonte/`ToUnicode`, figurinas pretas, encadeamento entre parágrafos e diagramas, PGN por partida, testes com fontes Type 3 | 2e aprovada |
 | ✅ | 4 | Glossário (modelo, editor, aplicação contextual), contexto por capítulo, editor de revisão com histórico, avaliação de modelos (Opus 5.5 × Sonnet 5.5 × Gemini × Qwen aberto) — `docs/research/10-fase4.md` | 3 |
-| 8 | 5 | Modos de layout completos, tipografia, detecção de cortes/sobreposições, relatórios de qualidade | 4 |
+| ✅ | 5 | Layout do livro inteiro (5569/5569 blocos, 441/441 páginas sem pendência na tradução simulada), memória (subconjuntos de fonte, montagem em blocos), tipografia (Urbanist/Liberation), detecção de cortes e sobreposições, aba Qualidade, seleção de motor com previsão de custo — `docs/research/12-fase5-layout.md`; modo B não foi necessário | 4 |
 | 9 | 6 | OCR melhorado (figurinas em imagem), retomada, reprocessamento seletivo, limites e custos, Docling para digitalizados | 5 |
 | 10 | 7 | Livros completos: integridade, desempenho, custo, retomada | 6 |
 | 11 | 8 | Interface final, instalação, backup, revisão de segurança, limitações conhecidas | 7 |
