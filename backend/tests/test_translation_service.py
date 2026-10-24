@@ -162,3 +162,12 @@ def test_glossary_check_flags_avoided_translation_and_cache_follows_the_glossary
     assert key != cache_key("p", "m", system_prompt(), seg, "", other)  # termo do segmento mudou
     assert key == cache_key("p", "m", system_prompt(), seg, "", same_term)  # só mudou termo ausente
     assert TranslationCache(tmp_path / "c.sqlite").get(key) is None
+
+
+def test_glossary_check_accepts_gender_and_skips_ambiguous_absence():
+    from app.translation.glossary import Glossary
+
+    g = Glossary.load()
+    assert g.check("White's king stays.", "O rei branco fica.") == []  # "as brancas" aceita "branco"
+    assert g.check("Black to move plays.", "Com a vez, as pretas jogam.") == []  # "to move" não é lance
+    assert g.check("A waiting move.", "Um movimento de espera.")[0].startswith("glossario_evitar:")

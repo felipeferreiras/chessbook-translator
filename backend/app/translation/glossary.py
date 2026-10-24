@@ -42,6 +42,8 @@ def _en_word(word: str) -> str:
 def _pt_word(word: str) -> str:
     """Um padrão que aceita plural e gênero: "peão"/"peões", "final"/"finais", "empate"/"empatada"."""
     low = word.lower()
+    if len(low) > 4 and low.endswith(("as", "os", "es")):
+        low = low[:-1]  # "brancas" → "branca": o radical abaixo aceita "branco" também
     if low.endswith("ão"):
         return re.escape(low[:-2]) + r"(?:ão|ões|ães|ãos)"
     if low.endswith("l"):
@@ -64,7 +66,7 @@ class GlossaryEntry:
     examples: list[str] = field(default_factory=list)
     avoid: list[str] = field(default_factory=list)  # traduções erradas para este termo
     case_sensitive: bool = False  # "White" (as brancas) não é "white pawn" (peão branco)
-    check: bool = True  # False: termo ambíguo demais para conferir depois ("the square")
+    check: bool = True  # False: não avisar ausência (termo ambíguo: "the square", "move" verbo); "avoid" vale sempre
 
     def source_pattern(self) -> re.Pattern[str]:
         words = self.term.split()
@@ -133,12 +135,10 @@ class Glossary:
         """Avisos de uso do glossário numa tradução (ver o início do módulo)."""
         warnings = []
         for e in self.relevant(source):
-            if not e.check:
-                continue
             wrong = [a for a in e.avoid if _present(a, translation)]
             if wrong:
                 warnings.append(f"glossario_evitar: '{e.term}' traduzido como '{wrong[0]}' (preferido: '{e.preferred}')")
-            elif not any(_present(a, translation) for a in e.accepted):
+            elif e.check and not any(_present(a, translation) for a in e.accepted):
                 warnings.append(f"glossario_ausente: '{e.term}' sem '{e.preferred}'")
         return warnings
 

@@ -10,7 +10,8 @@
       "category": "geral",
       "avoid": [
         "movimento"
-      ]
+      ],
+      "check": false
     },
     {
       "term": "waiting move",

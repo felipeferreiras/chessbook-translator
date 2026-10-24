@@ -11,7 +11,7 @@ uv venv .venv && uv pip install --python .venv/bin/python -e ".[dev,spike]"
 Requisitos do sistema: fonte DejaVu Sans (`fonts-dejavu-core`); Tesseract é
 opcional (o teste de OCR é pulado se não estiver instalado).
 
-## Suíte atual — 228 testes, todos passando em 2026-10-23
+## Suíte atual — 230 testes, todos passando em 2026-10-23
 
 | Arquivo | Cobre |
 |---|---|
