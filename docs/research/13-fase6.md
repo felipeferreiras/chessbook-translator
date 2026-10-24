@@ -201,10 +201,22 @@ obrigatória em todo parágrafo vindo do OCR, e não só nos que têm aviso.
 
 ## Docling
 
-Não foi possível avaliar. Os modelos de layout do Docling vêm do Hugging Face,
-e `huggingface.co` (e `download.pytorch.org`) estão bloqueados pela política
-de rede deste ambiente. O Docling segue como alternativa para páginas de layout
-complexo quando houver acesso; ver ADR-0007. O OCR atual não depende dele.
+O Docling 2.142.1 (MIT) foi instalado num ambiente separado, com 5,9 GB por
+causa do PyTorch, para não pesar no projeto. A avaliação está pronta em
+`scripts/evaluate_docling.py`, com as mesmas páginas e o mesmo gabarito do
+nosso OCR. Ela mede quatro coisas: palavras na ordem de leitura, lances com
+peça, diagramas detectados como imagem e tempo por página.
+
+Os modelos ainda não baixam. `huggingface.co` foi liberado em 2026-10-24, mas
+os pesos são servidos por outros endereços, que continuam bloqueados:
+
+* com o Xet: `cas-server.xethub.hf.co`, que leva a `cas-bridge.xethub.hf.co`
+  e `transfer.xethub.hf.co`;
+* sem o Xet (`HF_HUB_DISABLE_XET=1`): `us.aws.cdn.hf.co`, `cdn-lfs.huggingface.co`
+  e `cdn-lfs-us-1.hf.co`.
+
+Liberar `*.hf.co` (que inclui `*.xethub.hf.co`) e `cdn-lfs.huggingface.co`
+resolve. O OCR atual não depende do Docling.
 
 ## Limitações conhecidas
 
