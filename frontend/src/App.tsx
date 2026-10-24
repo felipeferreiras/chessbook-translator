@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, ApiError, GlossaryEntry, Project, Segment, Version } from "./api";
+import QualityView from "./QualityView";
 import TranslateView from "./TranslateView";
 
 // Preferências locais do revisor; o navegador pode recusar o armazenamento.
@@ -32,7 +33,7 @@ export default function App() {
   const [projectId, setProjectId] = useState(() => loadPref("project", ""));
   const [project, setProject] = useState<Project | null>(null);
   const [page, setPage] = useState<number | null>(null);
-  const [tab, setTab] = useState<"pages" | "translate" | "glossary">("pages");
+  const [tab, setTab] = useState<"pages" | "translate" | "quality" | "glossary">("pages");
   const [author, setAuthor] = useState(() => loadPref("author", ""));
   const [onlyAttention, setOnlyAttention] = useState(false);
   const [error, setError] = useState("");
@@ -85,6 +86,7 @@ export default function App() {
         <nav>
           <button className={tab === "pages" ? "on" : ""} onClick={() => setTab("pages")}>Páginas</button>
           <button className={tab === "translate" ? "on" : ""} onClick={() => setTab("translate")}>Traduzir</button>
+          <button className={tab === "quality" ? "on" : ""} onClick={() => setTab("quality")}>Qualidade</button>
           <button className={tab === "glossary" ? "on" : ""} onClick={() => setTab("glossary")}>Glossário</button>
         </nav>
       </header>
@@ -117,6 +119,9 @@ export default function App() {
       )}
       {project && tab === "translate" && (
         <TranslateView projectId={project.id} pages={project.pages} author={author} onChange={refreshProject} />
+      )}
+      {project && tab === "quality" && (
+        <QualityView projectId={project.id} onOpenPage={(pg) => { setPage(pg); setTab("pages"); }} />
       )}
       {project && tab === "glossary" && <GlossaryView projectId={project.id} author={author} />}
     </div>

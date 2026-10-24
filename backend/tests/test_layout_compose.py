@@ -117,7 +117,7 @@ def test_block_html_tabular_puts_page_numbers_right():
 def test_font_family_substitutions_are_reported():
     assert family_for("TimesNewRomanPS-BoldMT") == ("serif", None)
     assert family_for("LinaresFigurine") == ("serif", None)
-    assert family_for("CenturyGothic")[1] == "Century Gothic → Liberation Sans"
+    assert family_for("CenturyGothic") == ("geo", "Century Gothic → Urbanist")
     assert family_for("Desconhecida")[1] == "Desconhecida → Liberation Serif"
 
 
@@ -201,3 +201,18 @@ def test_shading_is_removed_but_text_and_board_stay():
     gray = page.get_pixmap(clip=pymupdf.Rect(250, 430, 299, 439), colorspace=pymupdf.csGRAY)
     assert min(gray.samples) > 250  # sem o cinza do fundo
     assert report.diagram_changed_pct == [0.0]
+
+
+def test_verify_text_tells_missing_from_cut():
+    doc = page_with_board()
+    page = doc[0]
+    page.insert_text((72, 470), "Início do bloco que aparece inteiro aqui.", fontsize=9)
+    page.insert_text((72, 485), "Outro bloco começa normalmente mas o fim", fontsize=9)
+    whole = BlockJob("a", layout(), 0, "Início do bloco que aparece inteiro aqui.")
+    cut = BlockJob("b", layout(), 0, "Outro bloco começa normalmente mas o fim se perdeu no caminho da montagem.")
+    absent = BlockJob("c", layout(), 0, "Bloco que não foi escrito em lugar nenhum desta página.")
+    original = pymupdf.open()
+    original.insert_pdf(doc)
+    report = compose_page(page, original[0], [], [BOARD], [], 1)
+    verify_text(page, report, [whole, cut, absent], {})
+    assert report.cut_text == ["b"] and report.missing_text == ["c"] and not report.ok

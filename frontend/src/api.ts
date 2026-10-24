@@ -105,6 +105,23 @@ export interface Job {
   finished_at: string | null;
 }
 
+export interface QualityPage {
+  page: number;
+  ok: boolean;
+  blocks: number;
+  reduced: number;
+  min_scale: number;
+  issues: Record<string, (string | number)[]>;
+}
+
+export interface Quality {
+  summary: Record<string, unknown>;
+  pages_ok: number;
+  pages_total: number;
+  pages: QualityPage[];
+  assembled_at: string;
+}
+
 /** Erro da API com os motivos que o backend devolveu (ex.: notação alterada). */
 export class ApiError extends Error {
   constructor(message: string, public problems: string[] = []) {
@@ -158,6 +175,7 @@ export const api = {
   startJob: (id: string, engine: string, pages: string, budget: number, author: string) =>
     call<Job>(`${p(id)}/jobs`, { method: "POST", body: JSON.stringify({ engine, pages, budget, author }) }),
   cancelJob: (id: string, job: number) => call<Job>(`${p(id)}/jobs/${job}/cancel`, { method: "POST" }),
+  quality: (id: string) => call<Quality>(`${p(id)}/quality`),
   pageImage: (id: string, page: number, which: "original" | "translated") =>
     `/api${p(id)}/pages/${page}/image?which=${which}`,
 };

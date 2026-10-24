@@ -17,6 +17,7 @@ Para cada página:
 
 from __future__ import annotations
 
+import functools
 import html
 import re
 from dataclasses import dataclass, field, replace
@@ -29,26 +30,30 @@ from app.pipeline.notation_pass import BlockLayout
 
 LIB = Path("/usr/share/fonts/truetype/liberation")
 FREE = Path("/usr/share/fonts/truetype/freefont")
+BUNDLED = Path(__file__).parent / "fonts"  # fontes OFL que acompanham o projeto (ver OFL-*.txt)
 
 # Família substituta por família original. Times New Roman e Arial têm
 # substitutas com as mesmas métricas (Liberation, licença OFL); as demais são
-# aproximações e ficam registradas no relatório.
+# aproximações e ficam registradas no relatório. Century Gothic é geométrica:
+# a Urbanist (OFL) é a parecida entre as livres comparadas (Didact Gothic não
+# tem negrito; Poppins é mais larga e pesada). Os subconjuntos do PDF não têm
+# letras acentuadas, então a fonte original não serve para o português.
 FONT_FAMILY = (
     (re.compile(r"TimesNewRoman|Times", re.IGNORECASE), "serif", None),
     (re.compile(r"Arial|Helvetica", re.IGNORECASE), "sans", None),
-    (re.compile(r"CenturyGothic", re.IGNORECASE), "sans", "Century Gothic → Liberation Sans"),
-    (re.compile(r"Broadway", re.IGNORECASE), "sans", "Broadway → Liberation Sans"),
+    (re.compile(r"CenturyGothic", re.IGNORECASE), "geo", "Century Gothic → Urbanist"),
+    (re.compile(r"Broadway", re.IGNORECASE), "geo", "Broadway → Urbanist"),
     (re.compile(r"Cambria|Calibri", re.IGNORECASE), "serif", "Cambria/Calibri → Liberation Serif"),
     # Figurinas são escritas na FreeSerif pelo HTML; o texto em volta é serifado.
     (re.compile(r"Linares", re.IGNORECASE), "serif", None),
 )
 SYMBOLS = re.compile(r"(\+−|−\+|[♔♕♖♗♘♙♚♛♜♝♞♟⊙△□⇆∞±∓⩲⩱−×])")
 
+# Por família: regular, negrito, itálico, negrito itálico.
 _FONT_FILES = {
-    "serif": ("LiberationSerif-Regular.ttf", "LiberationSerif-Bold.ttf",
-              "LiberationSerif-Italic.ttf", "LiberationSerif-BoldItalic.ttf"),
-    "sans": ("LiberationSans-Regular.ttf", "LiberationSans-Bold.ttf",
-             "LiberationSans-Italic.ttf", "LiberationSans-BoldItalic.ttf"),
+    "serif": tuple(LIB / f"LiberationSerif-{s}.ttf" for s in ("Regular", "Bold", "Italic", "BoldItalic")),
+    "sans": tuple(LIB / f"LiberationSans-{s}.ttf" for s in ("Regular", "Bold", "Italic", "BoldItalic")),
+    "geo": tuple(BUNDLED / f"Urbanist-{s}.ttf" for s in ("Regular", "Bold", "Italic", "BoldItalic")),
 }
 # (área, redução mínima) em ordem: primeiro sem reduzir, depois expandindo,
 # depois reduzindo em passos. A última tentativa aceita qualquer redução.
@@ -60,17 +65,61 @@ MAX_SILENT_REDUCTION = 0.85  # abaixo disso o bloco vai para revisão
 FLOW_SCALES = (1.0, 0.97, 0.94, 0.91, 0.88, 0.85)
 
 
+# Faixas mantidas nas fontes de texto: latim (com acentos e estendido), pontuação,
+# moeda, símbolos de letras, setas e operadores. Figurinas e símbolos do
+# Informator ficam na FreeSerif reduzida.
+_TEXT_RANGES = ((0x20, 0x24F), (0x2000, 0x206F), (0x20A0, 0x20CF), (0x2100, 0x214F), (0x2190, 0x21FF),
+                (0x2200, 0x22FF))
+_FIG_CHARS = "♔♕♖♗♘♙♚♛♜♝♞♟⊙△□⇆∞±∓⩲⩱−×+"
+
+
+def _subset(path: Path, codepoints: set[int]) -> bytes:
+    """A fonte só com os caracteres pedidos: cada bloco embute a fonte, então o tamanho importa.
+
+    Medido no livro inteiro: com as fontes completas (FreeSerif tem 3,7 MB), 40
+    páginas ocupavam 1,2 GB de memória e o livro não chegava ao fim.
+    """
+    import io
+    import logging
+
+    from fontTools import subset
+
+    logging.getLogger("fontTools.subset").setLevel(logging.ERROR)  # "FFTM NOT subset": tabela sem uso
+    font = subset.load_font(str(path), subset.Options())
+    options = subset.Options()
+    options.layout_features = ["*"]
+    options.notdef_outline = True
+    sub = subset.Subsetter(options)
+    sub.populate(unicodes=codepoints)
+    sub.subset(font)
+    out = io.BytesIO()
+    font.save(out)
+    return out.getvalue()
+
+
+@functools.cache
+def _font_data() -> tuple[tuple[str, bytes, str], ...]:
+    """(nome do arquivo, bytes, regra @font-face) de cada fonte, preparados uma vez por processo."""
+    text = {c for lo, hi in _TEXT_RANGES for c in range(lo, hi + 1)}
+    out = []
+    for family, files in _FONT_FILES.items():
+        for path, (weight, style) in zip(files, (("normal", "normal"), ("bold", "normal"),
+                                                 ("normal", "italic"), ("bold", "italic")), strict=True):
+            rule = (f"@font-face{{font-family:{family};font-weight:{weight};font-style:{style};"
+                    f"src:url({path.name});}}")
+            out.append((path.name, _subset(path, text), rule))
+    for name, weight in (("FreeSerif.ttf", "normal"), ("FreeSerifBold.ttf", "bold")):
+        out.append((name, _subset(FREE / name, {ord(c) for c in _FIG_CHARS}),
+                    f"@font-face{{font-family:fig;font-weight:{weight};src:url({name});}}"))
+    return tuple(out)
+
+
 def _archive() -> tuple[pymupdf.Archive, str]:
     arch = pymupdf.Archive()
     css = []
-    for family, files in _FONT_FILES.items():
-        for name, (weight, style) in zip(files, (("normal", "normal"), ("bold", "normal"),
-                                                 ("normal", "italic"), ("bold", "italic")), strict=True):
-            arch.add((LIB / name).read_bytes(), name)
-            css.append(f"@font-face{{font-family:{family};font-weight:{weight};font-style:{style};src:url({name});}}")
-    for name, weight in (("FreeSerif.ttf", "normal"), ("FreeSerifBold.ttf", "bold")):
-        arch.add((FREE / name).read_bytes(), name)
-        css.append(f"@font-face{{font-family:fig;font-weight:{weight};src:url({name});}}")
+    for name, data, rule in _font_data():
+        arch.add(data, name)
+        css.append(rule)
     return arch, "".join(css)
 
 
@@ -111,11 +160,12 @@ class PageReport:
     font_substitutions: list[str]
     overlaps: list[str] = field(default_factory=list)  # pares de blocos escritos um sobre o outro
     shading_removed: int = 0  # fundos sombreados retirados (decisão do usuário, 2026-10-23)
+    cut_text: list[str] = field(default_factory=list)  # início presente, fim ausente: texto cortado
 
     @property
     def ok(self) -> bool:
         return (not self.missing_text and not self.missing_notation and not self.leftover_original
-                and not self.overlaps
+                and not self.overlaps and not self.cut_text
                 and all(not b.needs_review for b in self.blocks)
                 and all(p == 0.0 for p in self.diagram_changed_pct))
 
@@ -509,12 +559,18 @@ def _norm(s: str) -> str:
 
 
 def verify_text(page: pymupdf.Page, report: PageReport, jobs: list[BlockJob], slots: dict[str, list[str]]) -> None:
-    """Confere na página gerada o início de cada bloco e todos os trechos de notação."""
+    """Confere na página gerada o início e o fim de cada bloco e todos os trechos de notação.
+
+    Início ausente: o bloco não está na página. Início presente e fim ausente:
+    o texto foi cortado.
+    """
     content = _norm(page.get_text())
     for job in jobs:
-        start = _norm(job.text.replace("\t", " "))[:30]
-        if start and start not in content:
+        text = _norm(job.text.replace("\t", " "))
+        if text[:30] and text[:30] not in content:
             report.missing_text.append(job.region_id)
+        elif text[-30:] and text[-30:] not in content:
+            report.cut_text.append(job.region_id)
         for slot in slots.get(job.region_id, []):
             if _norm(slot) not in content:
                 report.missing_notation.append(f"{job.region_id}: {slot[:40]}")

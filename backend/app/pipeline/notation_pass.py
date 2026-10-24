@@ -288,6 +288,28 @@ def _order(blocks: list[dict], page: pymupdf.Page) -> list[tuple[int, dict]]:
     return [(col, b) for _, col, b in keyed]
 
 
+def _split_around_board(block: dict, board: pymupdf.Rect) -> list[dict]:
+    """Divide um bloco que tem texto acima e abaixo do tabuleiro em partes separadas.
+
+    O PDF pode pôr no mesmo bloco a legenda acima do diagrama ("Bad Homburg
+    1927"), as linhas do tabuleiro e o parágrafo abaixo dele. Como um bloco só,
+    a área do texto cobriria o tabuleiro e a tradução seria escrita sobre ele
+    (achado na montagem do livro inteiro, p. 19).
+    """
+    groups: dict[str, list[dict]] = {"above": [], "middle": [], "below": []}
+    for line in block["lines"]:
+        mid = (line["bbox"][1] + line["bbox"][3]) / 2
+        groups["above" if mid < board.y0 else "below" if mid > board.y1 else "middle"].append(line)
+    parts = []
+    for key in ("above", "middle", "below"):
+        if groups[key]:
+            rect = pymupdf.Rect()
+            for line in groups[key]:
+                rect |= pymupdf.Rect(line["bbox"])
+            parts.append(dict(block, lines=groups[key], bbox=tuple(rect)))
+    return parts
+
+
 def collect(doc: pymupdf.Document, pages: range | None = None) -> DocumentNotation:
     """Extrai regiões e diagramas (sem validar ainda)."""
     result = DocumentNotation()
@@ -298,23 +320,26 @@ def collect(doc: pymupdf.Document, pages: range | None = None) -> DocumentNotati
         page = doc[pno]
         blocks = [b for b in page.get_text("dict")["blocks"] if b["type"] == 0]
         labels: list[tuple[pymupdf.Rect, str]] = []
-        for col, block in _order(blocks, page):
-            spans, raw_bold, diagram_lines, board_rect = _block_parts(block, vocab)
-            bbox = tuple(round(v, 1) for v in block["bbox"])
+        for col, whole in _order(blocks, page):
+            _, _, diagram_lines, board_rect = _block_parts(whole, vocab)
             if diagram_lines:
                 board_bbox = tuple(round(v, 1) for v in board_rect)
                 result.diagrams.append(Diagram(pno + 1, board_bbox, read_font_diagram(diagram_lines)))
-            text = "".join(s.text for s in spans).strip()
-            if not text:
-                continue
-            first_line = "".join(sp["text"] for sp in block["lines"][0]["spans"]).strip()
-            if len(first_line) <= 6 and not diagram_lines:
-                labels.append((pymupdf.Rect(block["bbox"]), first_line))
-            resolved = resolve_spans(spans, KNOWN_PROFILES)
-            role = "header" if block["bbox"][1] < 55 else "footer" if block["bbox"][1] > page.rect.height - 45 else "text"
-            result.regions.append(Region(pno + 1, bbox, col, resolved, _main_mask(resolved, raw_bold), role=role,
-                                         layout=_block_layout(block),
-                                         italic_mask=_main_mask(resolved, _italic_chars(spans))))
+            for block in _split_around_board(whole, board_rect) if diagram_lines else [whole]:
+                spans, raw_bold, part_diagram, _ = _block_parts(block, vocab)
+                bbox = tuple(round(v, 1) for v in block["bbox"])
+                text = "".join(s.text for s in spans).strip()
+                if not text:
+                    continue
+                first_line = "".join(sp["text"] for sp in block["lines"][0]["spans"]).strip()
+                if len(first_line) <= 6 and not part_diagram:
+                    labels.append((pymupdf.Rect(block["bbox"]), first_line))
+                resolved = resolve_spans(spans, KNOWN_PROFILES)
+                role = ("header" if block["bbox"][1] < 55
+                        else "footer" if block["bbox"][1] > page.rect.height - 45 else "text")
+                result.regions.append(Region(pno + 1, bbox, col, resolved, _main_mask(resolved, raw_bold), role=role,
+                                             layout=_block_layout(block),
+                                             italic_mask=_main_mask(resolved, _italic_chars(spans))))
         # Rótulos ao lado dos diagramas: número ("1-21") e vez de jogar ("W", "B?").
         for diagram in (d for d in result.diagrams if d.page == pno + 1):
             area = pymupdf.Rect(diagram.bbox)

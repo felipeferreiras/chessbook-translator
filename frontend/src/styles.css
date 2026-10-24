@@ -118,7 +118,7 @@ textarea { width: 100%; resize: vertical; white-space: pre-wrap; }
 table { border-collapse: collapse; width: 100%; background: var(--panel); }
 td, th { border: 1px solid var(--line); padding: 4px 8px; text-align: left; vertical-align: top; font-size: 14px; }
 
-.translate { padding: 16px; }
+.translate, .quality { padding: 16px; }
 .translate h3 { font-size: 15px; margin: 20px 0 8px; }
 .row { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
 .row label { display: flex; gap: 6px; align-items: center; }

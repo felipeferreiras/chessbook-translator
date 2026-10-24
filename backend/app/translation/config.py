@@ -25,7 +25,7 @@ from pathlib import Path
 
 from .provider import ConfigurationError, TranslationProvider
 
-PROVIDERS = ("pollinations", "anthropic", "openai", "gemini", "fake")
+PROVIDERS = ("pollinations", "anthropic", "openai", "gemini", "fake", "pseudo")
 
 # Modelos de moderação classificam texto como seguro/inseguro; não traduzem.
 _MODERATION_HINTS = ("guard", "moderation", "shield")
@@ -71,6 +71,10 @@ def provider_from_env(
         from .providers.fake import FakeProvider
 
         return FakeProvider()
+    if name == "pseudo":  # ensaio de layout, local: alonga o texto sem traduzir
+        from .providers.fake import PseudoProvider
+
+        return PseudoProvider(every=int(env.get("CHESSBOOK_PSEUDO_EVERY", "2")))
     if env.get("CHESSBOOK_PRIVACY_MODE", "local_only").strip() != "remote_allowed":
         raise ConfigurationError(
             f"o provedor {name!r} envia texto para fora desta máquina; defina "

@@ -10,9 +10,11 @@ por id validado.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 from dataclasses import asdict
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pymupdf
@@ -209,6 +211,35 @@ def page_image(project_id: str, page: int, which: str = "original", dpi: int = 1
         raise HTTPException(404, "página inexistente")
     png = doc[index].get_pixmap(dpi=dpi).tobytes("png")
     return Response(png, media_type="image/png", headers={"Cache-Control": "no-store"})
+
+
+@app.get("/api/projects/{project_id}/quality")
+def quality(project_id: str) -> dict:
+    """Relatório da última montagem do PDF traduzido: o que cada página tem de pendente."""
+    store = _store(project_id)
+    path = store.dir / "output" / "relatorio.json"
+    if not path.exists():
+        raise HTTPException(404, "PDF traduzido ainda não montado")
+    report = json.loads(path.read_text(encoding="utf-8"))
+    pages = []
+    for p in report["pages"]:
+        blocks = p["blocks"]
+        issues = {
+            "not_written": [b["region_id"] for b in blocks if not b["placed"]],
+            "review": [b["region_id"] for b in blocks if b["placed"] and b["scale"] < 0.85],
+            "missing_text": p["missing_text"], "cut_text": p.get("cut_text", []),
+            "missing_notation": p["missing_notation"], "overlaps": p.get("overlaps", []),
+            "leftover_original": p["leftover_original"],
+            "diagrams_changed": [x for x in p["diagram_changed_pct"] if x > 0],
+        }
+        reduced = [b["scale"] for b in blocks if b["placed"] and b["scale"] < 1]
+        pages.append({"page": p["page"], "ok": p["ok"], "blocks": len(blocks), "reduced": len(reduced),
+                      "min_scale": min(reduced, default=1.0), "issues": {k: v for k, v in issues.items() if v}})
+    s = report["summary"]
+    return {"summary": {k: s[k] for k in ("blocks", "blocks_placed", "blocks_expanded", "blocks_reduced",
+                                          "diagrams_checked", "font_substitutions") if k in s},
+            "pages_ok": len(s["pages_ok"]), "pages_total": len(s["pages"]), "pages": pages,
+            "assembled_at": datetime.fromtimestamp(path.stat().st_mtime, UTC).isoformat(timespec="seconds")}
 
 
 class PagesIn(BaseModel):
