@@ -11,7 +11,7 @@ uv venv .venv && uv pip install --python .venv/bin/python -e ".[dev,spike]"
 Requisitos do sistema: fonte DejaVu Sans (`fonts-dejavu-core`); Tesseract é
 opcional (o teste de OCR é pulado se não estiver instalado).
 
-## Suíte atual — 230 testes, todos passando em 2026-10-23
+## Suíte atual — 238 testes, todos passando em 2026-10-23
 
 | Arquivo | Cobre |
 |---|---|
@@ -29,6 +29,7 @@ opcional (o teste de OCR é pulado se não estiver instalado).
 | `test_sections.py` | capítulo em dois títulos vira um, linha curta com lances não é título, capítulo novo limpa a subseção |
 | `test_project_store.py` | original somente leitura conferido pelo sha256, importação, edição versionada e registrada, edição que muda lance ou casa recusada, reversão como versão nova, aprovação zerada ao mudar, glossário do projeto, exportação para a montagem |
 | `test_api.py` | listagem, edição recusada com motivos e aceita, reversão, aprovação, glossário padrão + projeto, ids validados, imagem da página |
+| `test_translation_jobs.py` | todos os motores com previsão, páginas inválidas recusadas, tarefa traduz pendentes e registra custo, parada no teto de gasto, motor não configurado, previsão igual aos lotes enviados, preços sem rede |
 | `test_pdf_fixtures.py` | extração de FAN Unicode, fonte figurina por letras, fonte de uso privado; proposta de mapa de glifos; letras comuns não confundidas; validação após mapeamento; caracterização do `insert_htmlbox`; referências do probe (todas as fontes com figurinas, margem contra outra peça); caracterização do Tesseract com FAN |
 
 Casos ambíguos cujo resultado correto é **pedir revisão**: SAN subespecificado,

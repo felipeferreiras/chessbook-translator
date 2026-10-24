@@ -118,6 +118,18 @@ textarea { width: 100%; resize: vertical; white-space: pre-wrap; }
 table { border-collapse: collapse; width: 100%; background: var(--panel); }
 td, th { border: 1px solid var(--line); padding: 4px 8px; text-align: left; vertical-align: top; font-size: 14px; }
 
+.translate { padding: 16px; }
+.translate h3 { font-size: 15px; margin: 20px 0 8px; }
+.row { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
+.row label { display: flex; gap: 6px; align-items: center; }
+.small { font-size: 12px; }
+table.engines tr { cursor: pointer; }
+table.engines tr.chosen td { background: var(--warn-bg); }
+button.primary { background: var(--accent); color: var(--panel); border-color: var(--accent); }
+.jobs { list-style: none; padding: 0; margin: 0; display: grid; gap: 10px; }
+.jobs li { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; }
+.jobs progress { width: 100%; margin: 6px 0 2px; }
+
 @media (max-width: 760px) {
   .layout { grid-template-columns: 1fr; padding: 12px; }
   aside { position: static; max-height: none; }

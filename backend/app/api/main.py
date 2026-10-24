@@ -21,8 +21,15 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from app.pipeline.segments import parse_pages
+from app.store import jobs as job_runner
 from app.store.project_store import GuardViolation, ProjectStore, SegmentView, StoreError
+from app.translation.cache import TranslationCache
+from app.translation.config import load_env_file, provider_from_env
+from app.translation.engines import ENGINES, Engine, Prices, estimate, group_by_section, load_prices
+from app.translation.engines import engine as engine_by_id
 from app.translation.glossary import Glossary, GlossaryEntry
+from app.translation.provider import ConfigurationError, TranslationProvider
 
 ROOT = Path(__file__).resolve().parents[3]
 DIST = ROOT / "frontend" / "dist"
@@ -30,6 +37,17 @@ _ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 _SEGMENT = re.compile(r"^p\d{1,5}-\d{1,7}$")
 
 app = FastAPI(title="chessbook-translator", docs_url="/api/docs", openapi_url="/api/openapi.json")
+load_env_file(ROOT / ".env")  # chave da Pollinations e CHESSBOOK_PRIVACY_MODE, sem sobrescrever o ambiente
+
+
+def provider_for(eng: Engine) -> TranslationProvider:
+    """Provedor do motor escolhido (substituído nos testes)."""
+    return provider_from_env(name="pollinations", model=eng.model)
+
+
+def prices() -> Prices:
+    """Preços do catálogo da Pollinations, com cache de um dia (substituído nos testes)."""
+    return load_prices(storage_root() / "pollinations-catalog.json")
 
 
 def storage_root() -> Path:
@@ -191,6 +209,93 @@ def page_image(project_id: str, page: int, which: str = "original", dpi: int = 1
         raise HTTPException(404, "página inexistente")
     png = doc[index].get_pixmap(dpi=dpi).tobytes("png")
     return Response(png, media_type="image/png", headers={"Cache-Control": "no-store"})
+
+
+class PagesIn(BaseModel):
+    pages: str = Field(min_length=1, max_length=400)
+
+
+class JobIn(BaseModel):
+    engine: str
+    pages: str = Field(min_length=1, max_length=400)
+    budget: float = Field(gt=0, le=1000)
+    author: str = Field(min_length=1, max_length=80)
+
+
+def _pages(store: ProjectStore, spec: str) -> set[int]:
+    try:
+        return parse_pages(spec, store.info["pages"])
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+def _estimates(store: ProjectStore, pages: set[int], engines: tuple[Engine, ...]) -> list[dict]:
+    groups = group_by_section(store.sources(pages))
+    table = prices()
+    glossary, style, cache = store.glossary(), store.style, TranslationCache(store.dir / "cache.sqlite")
+    out = []
+    for eng in engines:
+        e = estimate(groups, glossary, eng, table, style, cache)
+        price_in, price_out = table.by_model.get(eng.model, eng.fallback_price)
+        out.append({"engine": eng.id, "label": eng.label, "model": eng.model, "status": eng.status, "note": eng.note,
+                    "price_in_per_million": round(price_in * 1e6, 4), "price_out_per_million": round(price_out * 1e6, 4),
+                    "segments_to_send": e.segments_to_send, "cached": e.cached, "calls": e.calls,
+                    "input_tokens": e.input_tokens, "output_tokens": e.output_tokens, "cost": e.cost,
+                    "cost_low": e.cost_low, "cost_high": e.cost_high, "minutes": e.minutes,
+                    "price_source": e.price_source, "notes": e.notes})
+    return out
+
+
+@app.get("/api/engines")
+def engines() -> list[dict]:
+    return [{"id": e.id, "label": e.label, "model": e.model, "status": e.status, "note": e.note} for e in ENGINES]
+
+
+@app.post("/api/projects/{project_id}/estimate")
+def estimate_cost(project_id: str, body: PagesIn) -> dict:
+    """Previsão de custo e tempo de cada motor para as páginas, antes de traduzir."""
+    store = _store(project_id)
+    pages = _pages(store, body.pages)
+    in_pages = [s for s in store.segments() if s.page in pages]
+    return {"pages": len(pages), "segments": len(in_pages),
+            "already_translated": sum(s.current is not None for s in in_pages),
+            "notation_only": sum(s.status == "not_needed" for s in in_pages),
+            "pending": len(store.sources(pages)), "estimates": _estimates(store, pages, ENGINES)}
+
+
+@app.get("/api/projects/{project_id}/jobs")
+def jobs(project_id: str) -> list[dict]:
+    return [asdict(j) for j in job_runner.list_jobs(_store(project_id))]
+
+
+@app.post("/api/projects/{project_id}/jobs")
+def start_job(project_id: str, body: JobIn) -> dict:
+    """Inicia a tradução com o motor escolhido; para sozinha se o gasto real passar do teto."""
+    store = _store(project_id)
+    try:
+        eng = engine_by_id(body.engine)
+    except KeyError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    pages = _pages(store, body.pages)
+    try:
+        provider = provider_for(eng)
+    except ConfigurationError as exc:
+        raise HTTPException(400, f"motor não configurado: {exc}") from exc
+    predicted = _estimates(store, pages, (eng,))[0]["cost"]
+    try:
+        job = job_runner.start_job(store, eng, pages, body.pages, body.budget, body.author, provider, prices(),
+                                   estimate=predicted)
+    except StoreError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return asdict(job)
+
+
+@app.post("/api/projects/{project_id}/jobs/{job_id}/cancel")
+def cancel_job(project_id: str, job_id: int) -> dict:
+    try:
+        return asdict(job_runner.cancel_job(_store(project_id), job_id))
+    except StoreError as exc:
+        raise HTTPException(404, str(exc)) from exc
 
 
 if DIST.exists():

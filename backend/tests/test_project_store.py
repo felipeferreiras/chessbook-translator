@@ -49,7 +49,9 @@ def test_import_keeps_machine_version_and_states(store):
     assert segs["p1-0"].current.kind == "machine" and segs["p1-0"].current.version == 1
     assert segs["p1-1"].current is None and segs["p1-1"].status == "not_needed"
     assert segs["p2-2"].needs_attention and segs["p2-2"].machine_problems == ["marcador ausente"]
-    assert store.pages() == [{"page": 1, "segments": 2, "approved": 0}, {"page": 2, "segments": 1, "approved": 0}]
+    assert store.pages() == [
+        {"page": 1, "segments": 2, "approved": 0, "translated": 1, "notation_only": 1},
+        {"page": 2, "segments": 1, "approved": 0, "translated": 0, "notation_only": 0}]
     assert store.import_translation(_result()) == 0  # reimportar não duplica
 
 
@@ -95,3 +97,14 @@ def test_export_feeds_the_pdf_assembly(store):
     assert out["p1-0"]["raw_translation"] == "Após ⟦1⟧, o desvio em b5 vence."
     assert out["p1-1"]["status"] == "not_needed" and out["p1-1"]["text"] == "1.e4 e5"
     assert out["p2-2"]["status"] == "needs_review" and out["p2-2"]["text"] is None
+
+
+def test_book_segments_start_pending_and_machine_never_overwrites_human(store):
+    assert store.add_book_segments([{"id": "p3-0", "page": 3, "section": "Cap. 2", "source": "Black wins."}]) == 1
+    assert [sid for _, s in store.sources({3}) for sid in [s.id]] == ["p3-0"]
+    assert store.sources({1}) == []  # p1-0 já traduzido, p1-1 só notação
+    store.edit("p1-0", "Após 1.e4 e5 2.Nf3, o desvio em b5 vence.", "revisor")
+    with store._db() as db:
+        outcome = store.record_machine(db, {"id": "p1-0", "status": "translated", "text": "Outra 1.e4 e5 2.Nf3 b5.",
+                                            "raw_translation": "Outra ⟦1⟧ b5."})
+    assert outcome == "kept_human" and store.segment("p1-0").current.kind == "edit"

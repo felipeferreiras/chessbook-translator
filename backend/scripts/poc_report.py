@@ -27,6 +27,7 @@ from PIL import Image
 from app.chess.notation import MoveStatus
 from app.chess.notation.validate import REVIEW_WARNINGS
 from app.pipeline.notation_pass import DocumentNotation, collect, validate
+from app.pipeline.segments import book_segments
 from app.translation.guard import GuardViolation, protect, restore
 
 ACCEPTED = {"translated", "cached"}
@@ -109,8 +110,7 @@ def main() -> None:
     source_bytes = args.pdf.read_bytes()
     original = pymupdf.open(stream=source_bytes, filetype="pdf")
     full = collect(original)
-    regions = [r for r in full.regions if r.page in set(pages) and r.role == "text"]
-    region_by_id = {f"p{r.page}-{i}": r for i, r in enumerate(regions)}
+    region_by_id = {b.id: b.region for b in book_segments(full, pages=set(pages))}
     criteria: dict[str, dict] = {}
 
     # P1 — original intacto

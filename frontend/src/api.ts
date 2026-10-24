@@ -55,6 +55,56 @@ export interface GlossaryEntry {
   source: "padrão" | "projeto";
 }
 
+export interface EngineEstimate {
+  engine: string;
+  label: string;
+  model: string;
+  status: string;
+  note: string;
+  price_in_per_million: number;
+  price_out_per_million: number;
+  segments_to_send: number;
+  cached: number;
+  calls: number;
+  input_tokens: number;
+  output_tokens: number;
+  cost: number;
+  cost_low: number;
+  cost_high: number;
+  minutes: number;
+  price_source: string;
+  notes: string[];
+}
+
+export interface EstimateResponse {
+  pages: number;
+  segments: number;
+  already_translated: number;
+  notation_only: number;
+  pending: number;
+  estimates: EngineEstimate[];
+}
+
+export interface Job {
+  id: number;
+  engine: string;
+  model: string;
+  pages: string;
+  state: string;
+  total: number;
+  done: number;
+  tokens_in: number;
+  tokens_out: number;
+  cost: number;
+  estimate: number | null;
+  budget: number;
+  counts: Record<string, number>;
+  error: string | null;
+  author: string;
+  created_at: string;
+  finished_at: string | null;
+}
+
 /** Erro da API com os motivos que o backend devolveu (ex.: notação alterada). */
 export class ApiError extends Error {
   constructor(message: string, public problems: string[] = []) {
@@ -102,6 +152,12 @@ export const api = {
   glossary: (id: string) => call<GlossaryEntry[]>(`${p(id)}/glossary`),
   setGlossary: (id: string, entry: Omit<GlossaryEntry, "source">, author: string) =>
     call<{ ok: boolean }>(`${p(id)}/glossary`, { method: "PUT", body: JSON.stringify({ ...entry, author }) }),
+  estimate: (id: string, pages: string) =>
+    call<EstimateResponse>(`${p(id)}/estimate`, { method: "POST", body: JSON.stringify({ pages }) }),
+  jobs: (id: string) => call<Job[]>(`${p(id)}/jobs`),
+  startJob: (id: string, engine: string, pages: string, budget: number, author: string) =>
+    call<Job>(`${p(id)}/jobs`, { method: "POST", body: JSON.stringify({ engine, pages, budget, author }) }),
+  cancelJob: (id: string, job: number) => call<Job>(`${p(id)}/jobs/${job}/cancel`, { method: "POST" }),
   pageImage: (id: string, page: number, which: "original" | "translated") =>
     `/api${p(id)}/pages/${page}/image?which=${which}`,
 };

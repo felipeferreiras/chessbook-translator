@@ -24,6 +24,7 @@ from pathlib import Path
 import pymupdf
 
 from app.pipeline.notation_pass import collect
+from app.pipeline.segments import book_segments
 from app.store.project_store import ProjectStore
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -36,10 +37,8 @@ def storage_root() -> Path:
 def style_masks(pdf: Path, pages: set[int]):
     """Negrito e itálico por segmento, com os mesmos ids de ``translate_pages``."""
     notation = collect(pymupdf.open(pdf))
-    regions = [r for r in notation.regions if r.page in pages and r.role == "text"]
-    ids = [f"p{r.page}-{i}" for i, r in enumerate(regions)]
-    return notation, {i: r.main_mask for i, r in zip(ids, regions, strict=True)}, \
-        {i: r.italic_mask for i, r in zip(ids, regions, strict=True)}
+    segs = book_segments(notation, pages=pages)
+    return notation, {b.id: b.region.main_mask for b in segs}, {b.id: b.region.italic_mask for b in segs}
 
 
 def main() -> None:
@@ -66,7 +65,11 @@ def main() -> None:
         doc = pymupdf.open(args.pdf)
         notation = collect(doc)
         store = ProjectStore.create(root, args.id, args.name, args.pdf, doc.page_count, notation.style)
-        print(f"projeto criado em {store.dir} (sha256 {store.info['sha256'][:12]}…)")
+        segs = book_segments(notation, doc.metadata.get("title", "") or args.name)
+        store.add_book_segments([{"id": b.id, "page": b.page, "section": b.section.label,
+                                  "source": b.region.resolved.text, "kind": b.kind,
+                                  "bold": b.region.main_mask, "italic": b.region.italic_mask} for b in segs])
+        print(f"projeto criado em {store.dir} (sha256 {store.info['sha256'][:12]}…): {len(segs)} segmentos")
         return
     store = ProjectStore(root, args.id)
     if not store.verify_original():

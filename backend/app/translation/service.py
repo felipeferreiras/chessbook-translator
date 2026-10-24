@@ -113,6 +113,23 @@ def _batches(segments: list[Segment], max_chars: int, max_segments: int) -> list
     return out
 
 
+def prepare_segments(sources: list[SourceSegment], style: LexStyle = DEFAULT_STYLE
+                     ) -> list[tuple[SourceSegment, Protected, Segment, bool]]:
+    """Mascara cada segmento e monta o que vai ao provedor: (fonte, proteção, segmento, precisa traduzir?).
+
+    O contexto de cada segmento é o anterior, também mascarado. Usado pela
+    tradução e pela estimativa de custo, para que as duas vejam o mesmo pedido.
+    """
+    out = []
+    previous_masked = ""
+    for src in sources:
+        prot = protect(src.text, style, src.bold, src.italic)
+        out.append((src, prot, Segment(src.id, prot.masked, context_before=previous_masked[-600:], kind=src.kind),
+                    _needs_translation(prot.masked)))
+        previous_masked = prot.masked
+    return out
+
+
 def translate(
     sources: list[SourceSegment],
     provider: TranslationProvider,
@@ -127,16 +144,12 @@ def translate(
     results: dict[str, SegmentResult] = {}
     pending: list[Segment] = []
     calls: list[CallRecord] = []
-    previous_masked = ""
     system = build_request([], glossary, section).system_prompt
 
-    for src in sources:
-        prot = protect(src.text, style, src.bold, src.italic)
+    for src, prot, seg, needed in prepare_segments(sources, style):
         protected[src.id] = prot
-        seg = Segment(src.id, prot.masked, context_before=previous_masked[-600:], kind=src.kind)
-        previous_masked = prot.masked
         base = SegmentResult(src.id, src.text, prot.masked, SegmentStatus.NOT_NEEDED)
-        if not _needs_translation(prot.masked):
+        if not needed:
             base.text = src.text
             results[src.id] = base
             continue

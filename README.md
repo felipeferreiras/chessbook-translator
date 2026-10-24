@@ -29,7 +29,7 @@ Requisitos: Python 3.12+, [uv](https://docs.astral.sh/uv/), fonte DejaVu Sans
 cd backend
 uv venv .venv
 uv pip install --python .venv/bin/python -e ".[dev,spike]"   # inclui os SDKs de Claude, OpenAI e Gemini
-.venv/bin/python -m pytest -q        # 230 testes
+.venv/bin/python -m pytest -q        # 238 testes
 .venv/bin/ruff check app tests scripts ../spikes
 ```
 
@@ -70,7 +70,7 @@ export CHESSBOOK_STORAGE=/fora/do/repositorio/projetos   # contém o livro e a t
 .venv/bin/uvicorn app.api.main:app --host 127.0.0.1 --port 8000   # abrir http://127.0.0.1:8000
 ```
 
-Na interface: cada parágrafo com o original e a tradução editável; salvar
+Na aba **Traduzir**: escolha as páginas, veja a previsão de custo e tempo de cada motor (Sonnet 5.5, Opus 5.5, Gemini 3.8 Flash, GPT-5.5, GPT-5.4 Nano, Qwen 3.8 27B), marque um, defina o teto de gasto e inicie (`docs/research/11-motores-custo.md`). Na aba **Páginas**: cada parágrafo com o original e a tradução editável; salvar
 cria uma versão nova (a edição é recusada se algum lance, casa, número ou
 símbolo mudar); aprovar; histórico com volta a qualquer versão; glossário do
 projeto. Depois da revisão, `scripts.project assemble` monta o PDF com o texto

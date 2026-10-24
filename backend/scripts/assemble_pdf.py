@@ -22,6 +22,7 @@ from PIL import Image
 
 from app.layout.compose import BlockJob, compose_page, verify_text
 from app.pipeline.notation_pass import collect
+from app.pipeline.segments import book_segments
 from app.translation.guard import protect, restore
 
 ACCEPTED = {"translated", "cached", "reviewed"}  # reviewed: editado no projeto
@@ -66,8 +67,9 @@ def main() -> None:
     sha_before = hashlib.sha256(source_bytes).hexdigest()
     original = pymupdf.open(stream=source_bytes, filetype="pdf")
     notation = collect(original)
-    regions = [r for r in notation.regions if r.page in set(pages) and r.role == "text"]
-    ids = [f"p{r.page}-{i}" for i, r in enumerate(regions)]
+    segs = book_segments(notation, pages=set(pages))
+    regions = [b.region for b in segs]
+    ids = [b.id for b in segs]
     mismatched = [i for i, r in zip(ids, regions, strict=True) if by_id.get(i, {}).get("source") != r.resolved.text]
     if mismatched:
         raise SystemExit(f"o resultado da tradução não corresponde ao texto extraído: {mismatched[:5]}")

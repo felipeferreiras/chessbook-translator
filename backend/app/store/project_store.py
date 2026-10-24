@@ -27,6 +27,7 @@ from pathlib import Path
 from app.chess.notation.lexer import LexStyle
 from app.translation.glossary import Glossary, GlossaryEntry
 from app.translation.guard import GuardViolation, mask_edit, protect, restore
+from app.translation.service import SourceSegment, _needs_translation
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS project (
@@ -37,6 +38,7 @@ CREATE TABLE IF NOT EXISTS segment (
     id TEXT PRIMARY KEY, page INTEGER NOT NULL, ordinal INTEGER NOT NULL, section TEXT NOT NULL DEFAULT '',
     source TEXT NOT NULL, bold_json TEXT NOT NULL DEFAULT '[]', italic_json TEXT NOT NULL DEFAULT '[]',
     status TEXT NOT NULL, current_version INTEGER, approved INTEGER NOT NULL DEFAULT 0,
+    kind TEXT NOT NULL DEFAULT 'paragraph',
     machine_problems_json TEXT NOT NULL DEFAULT '[]'
 );
 CREATE TABLE IF NOT EXISTS translation (
@@ -48,6 +50,13 @@ CREATE TABLE IF NOT EXISTS translation (
 CREATE TABLE IF NOT EXISTS revision (
     id INTEGER PRIMARY KEY AUTOINCREMENT, entity TEXT NOT NULL, entity_id TEXT NOT NULL, kind TEXT NOT NULL,
     old_value TEXT, new_value TEXT, author TEXT NOT NULL, created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS job (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, engine TEXT NOT NULL, model TEXT NOT NULL, pages TEXT NOT NULL,
+    state TEXT NOT NULL, total INTEGER NOT NULL DEFAULT 0, done INTEGER NOT NULL DEFAULT 0,
+    tokens_in INTEGER NOT NULL DEFAULT 0, tokens_out INTEGER NOT NULL DEFAULT 0, cost REAL NOT NULL DEFAULT 0,
+    estimate REAL, budget REAL NOT NULL, counts_json TEXT NOT NULL DEFAULT '{}', error TEXT,
+    author TEXT NOT NULL, created_at TEXT NOT NULL, finished_at TEXT
 );
 CREATE INDEX IF NOT EXISTS segment_page ON segment(page, ordinal);
 CREATE INDEX IF NOT EXISTS revision_entity ON revision(entity, entity_id);
@@ -110,6 +119,11 @@ class ProjectStore:
         self.db_path = self.dir / "app.db"
         if not self.db_path.exists():
             raise StoreError(f"projeto inexistente: {project_id}")
+        with self._db() as db:  # projetos criados antes de colunas/tabelas novas
+            db.executescript(SCHEMA)
+            columns = {r["name"] for r in db.execute("PRAGMA table_info(segment)")}
+            if "kind" not in columns:
+                db.execute("ALTER TABLE segment ADD COLUMN kind TEXT NOT NULL DEFAULT 'paragraph'")
 
     # --- criação ---------------------------------------------------------
     @classmethod
@@ -135,7 +149,7 @@ class ProjectStore:
 
     @contextmanager
     def _db(self) -> Iterator[sqlite3.Connection]:
-        db = sqlite3.connect(self.db_path)
+        db = sqlite3.connect(self.db_path, timeout=30)
         db.row_factory = sqlite3.Row
         try:
             yield db
@@ -162,26 +176,60 @@ class ProjectStore:
         return _sha256(self.original_path) == self.info["sha256"]
 
     # --- importação da tradução automática -------------------------------
+    def add_book_segments(self, segments: list[dict]) -> int:
+        """Todos os segmentos do livro, pendentes: {id, page, section, source, kind, bold, italic}."""
+        added = 0
+        style = self.style
+        with self._db() as db:
+            for ordinal, seg in enumerate(segments):
+                masked = protect(seg["source"], style, list(seg.get("bold", [])), list(seg.get("italic", []))).masked
+                status = "pending" if _needs_translation(masked) else "not_needed"  # só notação: nunca vai ao motor
+                cur = db.execute(
+                    "INSERT OR IGNORE INTO segment (id, page, ordinal, section, source, bold_json, italic_json, status,"
+                    " kind) VALUES (?,?,?,?,?,?,?,?,?)",
+                    (seg["id"], seg["page"], ordinal, seg.get("section", ""), seg["source"],
+                     json.dumps(list(seg.get("bold", []))), json.dumps(list(seg.get("italic", []))), status,
+                     seg.get("kind", "paragraph")))
+                added += cur.rowcount
+        return added
+
+    def record_machine(self, db: sqlite3.Connection, seg: dict, author: str = "sistema") -> str:
+        """Registra o resultado da tradução automática de um segmento existente.
+
+        Uma edição humana nunca é sobrescrita: se a versão atual for de pessoa,
+        a tradução nova não é gravada. Devolve o que aconteceu.
+        """
+        row = db.execute("SELECT current_version FROM segment WHERE id=?", (seg["id"],)).fetchone()
+        if row is None:
+            raise StoreError(f"segmento inexistente: {seg['id']}")
+        if row["current_version"]:
+            kind = db.execute("SELECT kind FROM translation WHERE segment_id=? AND version=?",
+                              (seg["id"], row["current_version"])).fetchone()["kind"]
+            if kind != "machine":
+                return "kept_human"
+        db.execute("UPDATE segment SET status=?, machine_problems_json=? WHERE id=?",
+                   (seg["status"], json.dumps(seg.get("problems", [])), seg["id"]))
+        if seg["status"] in ("translated", "cached") and seg.get("raw_translation"):
+            self._add_version(db, seg["id"], "machine", seg["text"], seg["raw_translation"], seg.get("warnings", []),
+                              author, seg.get("provider", ""), seg.get("model", ""))
+            return "translated"
+        return seg["status"]
+
     def import_translation(self, result: dict, bold: dict[str, list[bool]] | None = None,
                            italic: dict[str, list[bool]] | None = None, author: str = "sistema") -> int:
-        """Importa ``resultado.json`` de ``translate_pages`` (segmentos novos; os já importados ficam)."""
+        """Importa ``resultado.json`` de ``translate_pages``: cria os segmentos que faltam e grava as traduções."""
         bold, italic = bold or {}, italic or {}
-        added = 0
+        self.add_book_segments([{**seg, "bold": bold.get(seg["id"], []), "italic": italic.get(seg["id"], [])}
+                                for seg in result["segments"]])
+        imported = 0
         with self._db() as db:
-            for ordinal, seg in enumerate(result["segments"]):
-                if db.execute("SELECT 1 FROM segment WHERE id=?", (seg["id"],)).fetchone():
-                    continue
-                db.execute(
-                    "INSERT INTO segment (id, page, ordinal, section, source, bold_json, italic_json, status,"
-                    " machine_problems_json) VALUES (?,?,?,?,?,?,?,?,?)",
-                    (seg["id"], seg["page"], ordinal, seg.get("section", ""), seg["source"],
-                     json.dumps(bold.get(seg["id"], [])), json.dumps(italic.get(seg["id"], [])), seg["status"],
-                     json.dumps(seg.get("problems", []))))
-                if seg["status"] in ("translated", "cached") and seg.get("raw_translation"):
-                    self._add_version(db, seg["id"], "machine", seg["text"], seg["raw_translation"],
-                                      seg.get("warnings", []), author, seg.get("provider", ""), seg.get("model", ""))
-                added += 1
-        return added
+            for seg in result["segments"]:
+                current = db.execute("SELECT current_version, status FROM segment WHERE id=?", (seg["id"],)).fetchone()
+                gains_text = seg["status"] in ("translated", "cached") and seg.get("raw_translation")
+                if current["current_version"] is None and (current["status"] == "pending" or gains_text):
+                    self.record_machine(db, seg, author)
+                    imported += 1
+        return imported
 
     def _add_version(self, db: sqlite3.Connection, segment_id: str, kind: str, text: str, masked: str,
                      warnings: list[str], author: str, provider: str = "", model: str = "") -> int:
@@ -222,9 +270,27 @@ class ProjectStore:
             return self._view(db, row)
 
     def pages(self) -> list[dict]:
+        """Páginas com segmentos: total, traduzidos (com alguma versão), aprovados."""
         with self._db() as db:
-            rows = db.execute("SELECT page, COUNT(*) n, SUM(approved) ok FROM segment GROUP BY page ORDER BY page")
-            return [{"page": r["page"], "segments": r["n"], "approved": r["ok"] or 0} for r in rows]
+            rows = db.execute("SELECT page, COUNT(*) n, SUM(approved) ok, SUM(current_version IS NOT NULL) tr,"
+                              " SUM(status = 'not_needed') nn FROM segment GROUP BY page ORDER BY page")
+            return [{"page": r["page"], "segments": r["n"], "approved": r["ok"] or 0, "translated": r["tr"] or 0,
+                     "notation_only": r["nn"] or 0} for r in rows]
+
+    def sources(self, pages: set[int], only_pending: bool = True) -> list[tuple[str, SourceSegment]]:
+        """[(seção, segmento)] das páginas, em ordem; ``only_pending`` pula os já traduzidos ou só de notação."""
+        with self._db() as db:
+            rows = db.execute("SELECT * FROM segment ORDER BY ordinal").fetchall()
+        out = []
+        for r in rows:
+            if r["page"] not in pages:
+                continue
+            if only_pending and (r["current_version"] is not None or r["status"] == "not_needed"):
+                continue
+            out.append((r["section"], SourceSegment(r["id"], r["source"], kind=r["kind"],
+                                                    bold=tuple(json.loads(r["bold_json"])),
+                                                    italic=tuple(json.loads(r["italic_json"])))))
+        return out
 
     def history(self, segment_id: str) -> list[Version]:
         with self._db() as db:
