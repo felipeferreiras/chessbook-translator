@@ -29,7 +29,7 @@ Requisitos: Python 3.12+, [uv](https://docs.astral.sh/uv/), fonte DejaVu Sans
 cd backend
 uv venv .venv
 uv pip install --python .venv/bin/python -e ".[dev,spike]"   # inclui os SDKs de Claude, OpenAI e Gemini
-.venv/bin/python -m pytest -q        # 212 testes
+.venv/bin/python -m pytest -q        # 228 testes
 .venv/bin/ruff check app tests scripts ../spikes
 ```
 
@@ -57,6 +57,24 @@ cd backend
 ```
 
 Como a montagem funciona e o que ela verifica: `docs/research/07-montagem-pdf.md`.
+
+## Revisão (projeto + interface)
+
+```bash
+cd backend
+export CHESSBOOK_STORAGE=/fora/do/repositorio/projetos   # contém o livro e a tradução
+.venv/bin/python -m scripts.project create meu-livro "Meu livro" LIVRO.pdf
+.venv/bin/python -m scripts.project import meu-livro SAÍDA_TRAD
+.venv/bin/python -m scripts.project assemble meu-livro      # PDF traduzido para ver lado a lado
+(cd ../frontend && npm install && npm run build)
+.venv/bin/uvicorn app.api.main:app --host 127.0.0.1 --port 8000   # abrir http://127.0.0.1:8000
+```
+
+Na interface: cada parágrafo com o original e a tradução editável; salvar
+cria uma versão nova (a edição é recusada se algum lance, casa, número ou
+símbolo mudar); aprovar; histórico com volta a qualquer versão; glossário do
+projeto. Depois da revisão, `scripts.project assemble` monta o PDF com o texto
+revisado.
 
 ## Documentação
 

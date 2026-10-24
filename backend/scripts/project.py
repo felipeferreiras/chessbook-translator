@@ -4,6 +4,7 @@ Uso (a partir de backend/):
     .venv/bin/python -m scripts.project create ID "Nome" LIVRO.pdf
     .venv/bin/python -m scripts.project import ID TRADUÇÃO_DIR      # resultado.json de translate_pages
     .venv/bin/python -m scripts.project export ID SAÍDA_DIR          # resultado.json para assemble_pdf
+    .venv/bin/python -m scripts.project assemble ID                  # PDF traduzido em <projeto>/output/
     .venv/bin/python -m scripts.project status ID
 
 Os projetos ficam em ``$CHESSBOOK_STORAGE`` (padrão: ``storage/`` na raiz do
@@ -15,6 +16,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import subprocess
+import sys
 from collections import Counter
 from pathlib import Path
 
@@ -52,6 +55,8 @@ def main() -> None:
     e = sub.add_parser("export")
     e.add_argument("id")
     e.add_argument("out", type=Path)
+    a = sub.add_parser("assemble")
+    a.add_argument("id")
     s = sub.add_parser("status")
     s.add_argument("id")
     args = ap.parse_args()
@@ -75,6 +80,15 @@ def main() -> None:
         (args.out / "resultado.json").write_text(json.dumps(store.export_result(), ensure_ascii=False, indent=1),
                                                  encoding="utf-8")
         print(f"exportado para {args.out / 'resultado.json'}")
+    elif args.cmd == "assemble":
+        export = store.dir / "output" / "export"
+        export.mkdir(parents=True, exist_ok=True)
+        result = store.export_result()
+        (export / "resultado.json").write_text(json.dumps(result, ensure_ascii=False, indent=1), encoding="utf-8")
+        subprocess.run([sys.executable, "-m", "scripts.assemble_pdf", str(store.original_path), str(export),
+                        str(store.dir / "output")], check=True, cwd=Path(__file__).resolve().parents[1])
+        (store.dir / "output" / "pages.txt").write_text(" ".join(map(str, result["summary"]["pages"])))
+        print(f"PDF traduzido em {store.dir / 'output' / 'traduzido.pdf'}")
     elif args.cmd == "status":
         segs = store.segments()
         kinds = Counter(s.current.kind if s.current else s.status for s in segs)

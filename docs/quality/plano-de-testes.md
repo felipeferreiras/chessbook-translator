@@ -11,7 +11,7 @@ uv venv .venv && uv pip install --python .venv/bin/python -e ".[dev,spike]"
 Requisitos do sistema: fonte DejaVu Sans (`fonts-dejavu-core`); Tesseract é
 opcional (o teste de OCR é pulado se não estiver instalado).
 
-## Suíte atual — 212 testes, todos passando em 2026-10-23
+## Suíte atual — 228 testes, todos passando em 2026-10-23
 
 | Arquivo | Cobre |
 |---|---|
@@ -26,6 +26,9 @@ opcional (o teste de OCR é pulado se não estiver instalado).
 | `test_line_joining.py` | hífen no fim da linha: referências, casas e lances partidos, hífen suspenso, nomes compostos, hifenização desfeita só com evidência do vocabulário, alinhamento do negrito |
 | `test_layout_compose.py` | montagem em página sintética: original removido e tabuleiro intacto, fluxo empurra o bloco seguinte, tabuleiro encerra o fluxo, bloco que não cabe vai para revisão, redação recortada fora do tabuleiro, moldura do diagrama, linha única centralizada sem invadir vizinhos, HTML (negrito, itálico, símbolos, sumário em tabela com estilo por célula), substituição de fontes, notação ausente, fundo sombreado retirado sem afetar texto e tabuleiro |
 | `test_font_signals.py` | fonte figurina que reaproveita letras, Type 3 sem `ToUnicode` (letras da codificação, probe só pela página), Type 3 com `ToUnicode` para figurinas e para letras, probe de página em Type 3 |
+| `test_sections.py` | capítulo em dois títulos vira um, linha curta com lances não é título, capítulo novo limpa a subseção |
+| `test_project_store.py` | original somente leitura conferido pelo sha256, importação, edição versionada e registrada, edição que muda lance ou casa recusada, reversão como versão nova, aprovação zerada ao mudar, glossário do projeto, exportação para a montagem |
+| `test_api.py` | listagem, edição recusada com motivos e aceita, reversão, aprovação, glossário padrão + projeto, ids validados, imagem da página |
 | `test_pdf_fixtures.py` | extração de FAN Unicode, fonte figurina por letras, fonte de uso privado; proposta de mapa de glifos; letras comuns não confundidas; validação após mapeamento; caracterização do `insert_htmlbox`; referências do probe (todas as fontes com figurinas, margem contra outra peça); caracterização do Tesseract com FAN |
 
 Casos ambíguos cujo resultado correto é **pedir revisão**: SAN subespecificado,
