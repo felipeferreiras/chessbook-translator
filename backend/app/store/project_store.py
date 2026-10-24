@@ -106,7 +106,7 @@ class SegmentView:
     @property
     def needs_attention(self) -> bool:
         """Precisa de olhos humanos: falhou, a proteção recusou, ou o glossário foi contrariado."""
-        if self.status in ("needs_review", "failed"):
+        if self.status in ("needs_review", "failed", "blocked"):
             return True
         return bool(self.current and any(w.startswith("glossario_evitar:") for w in self.current.warnings))
 
@@ -184,12 +184,15 @@ class ProjectStore:
             for ordinal, seg in enumerate(segments):
                 masked = protect(seg["source"], style, list(seg.get("bold", [])), list(seg.get("italic", []))).masked
                 status = "pending" if _needs_translation(masked) else "not_needed"  # só notação: nunca vai ao motor
+                problems = []
+                if seg.get("blocked"):  # lances desenhados como vetor: não traduzir automaticamente
+                    status, problems = "blocked", [seg["blocked"]]
                 cur = db.execute(
                     "INSERT OR IGNORE INTO segment (id, page, ordinal, section, source, bold_json, italic_json, status,"
-                    " kind) VALUES (?,?,?,?,?,?,?,?,?)",
+                    " kind, machine_problems_json) VALUES (?,?,?,?,?,?,?,?,?,?)",
                     (seg["id"], seg["page"], ordinal, seg.get("section", ""), seg["source"],
                      json.dumps(list(seg.get("bold", []))), json.dumps(list(seg.get("italic", []))), status,
-                     seg.get("kind", "paragraph")))
+                     seg.get("kind", "paragraph"), json.dumps(problems)))
                 added += cur.rowcount
         return added
 
@@ -285,7 +288,7 @@ class ProjectStore:
         for r in rows:
             if r["page"] not in pages:
                 continue
-            if only_pending and (r["current_version"] is not None or r["status"] == "not_needed"):
+            if only_pending and (r["current_version"] is not None or r["status"] in ("not_needed", "blocked")):
                 continue
             out.append((r["section"], SourceSegment(r["id"], r["source"], kind=r["kind"],
                                                     bold=tuple(json.loads(r["bold_json"])),

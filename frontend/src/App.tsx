@@ -25,6 +25,7 @@ const STATUS: Record<string, string> = {
   cached: "traduzido",
   not_needed: "só notação",
   needs_review: "recusado pela proteção",
+  blocked: "bloqueado: lances desenhados (traduzir à mão)",
   failed: "falhou",
 };
 

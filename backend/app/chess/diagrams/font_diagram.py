@@ -30,7 +30,7 @@ from app.extraction.font_profiles import (
     LINARES_DIAGRAM_SQUARES,
 )
 
-_RANK_LINE = re.compile(r"^\{(.{8})\}$")
+RANK_LINE = re.compile(r"^\{(.{8})\}$")  # uma fileira: {8 casas}
 MAX_PIECE_COLOR_DEFECTS = 2
 
 
@@ -53,8 +53,8 @@ class DiagramReading:
 
 def read_font_diagram(lines: list[str]) -> DiagramReading:
     """Lê as linhas de um diagrama Linares (moldura + 8 fileiras + moldura)."""
-    ranks = [m.group(1) for line in lines if (m := _RANK_LINE.match(line.strip()))]
-    others = [line.strip() for line in lines if not _RANK_LINE.match(line.strip()) and line.strip()]
+    ranks = [m.group(1) for line in lines if (m := RANK_LINE.match(line.strip()))]
+    others = [line.strip() for line in lines if not RANK_LINE.match(line.strip()) and line.strip()]
     reading = DiagramReading(placement=None)
     if len(ranks) != 8:
         reading.issues.append(f"esperadas 8 fileiras, encontradas {len(ranks)}")

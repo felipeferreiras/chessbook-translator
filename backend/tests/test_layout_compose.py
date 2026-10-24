@@ -216,3 +216,12 @@ def test_verify_text_tells_missing_from_cut():
     report = compose_page(page, original[0], [], [BOARD], [], 1)
     verify_text(page, report, [whole, cut, absent], {})
     assert report.cut_text == ["b"] and report.missing_text == ["c"] and not report.ok
+
+
+def test_two_single_lines_side_by_side_share_the_gap():
+    """Caso real (p. 152): títulos lado a lado cresciam um sobre o outro."""
+    left = pymupdf.Rect(103, 163, 200, 174)
+    right = pymupdf.Rect(319, 163, 421, 174)
+    a, _ = _single_line_area(left, (48, 333), (48, 473), [], growing=[right])
+    b, _ = _single_line_area(right, (267, 473), (48, 473), [], growing=[left])
+    assert a.x1 <= b.x0

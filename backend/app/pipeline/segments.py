@@ -27,6 +27,14 @@ class BookSegment:
     def kind(self) -> str:
         return "heading" if self.section.heading_level else "paragraph"
 
+    @property
+    def blocked(self) -> str:
+        """Motivo para não traduzir automaticamente (vazio se pode)."""
+        if self.region.vector_glyphs:
+            return (f"{self.region.vector_glyphs} glifos desenhados como vetor (lances sem texto extraível): "
+                    "o bloco fica no original para revisão")
+        return ""
+
     def source(self) -> SourceSegment:
         r = self.region
         return SourceSegment(self.id, r.resolved.text, kind=self.kind, bold=tuple(r.main_mask),

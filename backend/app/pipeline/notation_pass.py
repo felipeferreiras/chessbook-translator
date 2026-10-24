@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 
 import pymupdf
 
-from app.chess.diagrams.font_diagram import DiagramReading, read_font_diagram, side_from_label
+from app.chess.diagrams.font_diagram import RANK_LINE, DiagramReading, read_font_diagram, side_from_label
 from app.chess.notation import AtomKind, Context, Convention, MoveStatus, RegionAnalysis, analyze_region, lex
 from app.chess.notation.convention import detect_convention, detect_style
 from app.chess.notation.lexer import LexStyle
@@ -56,6 +56,7 @@ class Region:
     role: str = "text"  # text | header | footer
     layout: BlockLayout | None = None
     italic_mask: list[bool] = field(default_factory=list)  # itálico por caractere do texto resolvido
+    vector_glyphs: int = 0  # contornos escuros dentro do texto: lances desenhados como vetor, sem texto extraível
 
 
 @dataclass
@@ -288,6 +289,82 @@ def _order(blocks: list[dict], page: pymupdf.Page) -> list[tuple[int, dict]]:
     return [(col, b) for _, col, b in keyed]
 
 
+def _vector_glyphs(page: pymupdf.Page) -> list[pymupdf.Point]:
+    """Centros de contornos pequenos e escuros: glifos desenhados como vetor.
+
+    No livro de amostra, lances em negrito itálico de alguns quadros foram
+    convertidos em curvas (6 páginas). Eles não aparecem no texto extraído; o
+    bloco que os contém não pode ser traduzido sem perder lances.
+    """
+    out = []
+    for d in page.get_drawings():
+        r, fill = d["rect"], d.get("fill")
+        if d.get("type") in ("f", "fs") and fill and max(fill) < 0.3 and r.width < 15 and r.height < 15 \
+                and len(d["items"]) > 3:
+            out.append(pymupdf.Point((r.x0 + r.x1) / 2, (r.y0 + r.y1) / 2))
+    return out
+
+
+def _diagram_rows(block: dict) -> list[tuple[str, pymupdf.Rect]]:
+    """Linhas do tabuleiro do bloco, cada uma com sua caixa."""
+    rows = []
+    for row in visual_rows(block["lines"]):
+        spans = [sp for ln in row for sp in ln["spans"] if _is_diagram_span(sp)]
+        if spans:
+            rect = pymupdf.Rect()
+            for sp in spans:
+                rect |= pymupdf.Rect(sp["bbox"])
+            rows.append(("".join(sp["text"] for sp in spans), rect))
+    return rows
+
+
+def _split_boards(rows: list[tuple[str, pymupdf.Rect]]) -> list[tuple[list[str], pymupdf.Rect]]:
+    """Separa tabuleiros empilhados num mesmo bloco: moldura, 8 fileiras, moldura.
+
+    No livro de amostra, 21 blocos traziam 2 a 4 tabuleiros juntos e eram lidos
+    como um só (16, 24 ou 32 fileiras), sem posição para nenhum deles.
+    """
+    boards: list[list[tuple[str, pymupdf.Rect]]] = []
+    current: list[tuple[str, pymupdf.Rect]] = []
+    ranks = 0
+    for text, rect in rows:
+        is_rank = bool(RANK_LINE.match(text.strip()))
+        current.append((text, rect))
+        if is_rank:
+            ranks += 1
+        elif ranks == 8:  # moldura de baixo: o tabuleiro está completo
+            boards.append(current)
+            current, ranks = [], 0
+    if current:
+        boards.append(current)
+    out = []
+    for board in boards:
+        rect = pymupdf.Rect()
+        for _, r in board:
+            rect |= r
+        out.append(([t for t, _ in board], rect))
+    return out
+
+
+def _merge_board_strips(diagrams: list[Diagram], page: int) -> None:
+    """Junta a faixa de cima (só a moldura) ao tabuleiro logo abaixo dela.
+
+    O PDF às vezes põe a moldura superior num bloco e o resto do tabuleiro no
+    seguinte; lidos separados, viravam um "diagrama" sem fileiras e um
+    tabuleiro sem moldura (7 casos no livro de amostra).
+    """
+    on_page = [d for d in diagrams if d.page == page]
+    for strip in on_page:
+        if not any("encontradas 0" in issue for issue in strip.reading.issues):
+            continue
+        below = next((d for d in on_page if d is not strip and abs(d.bbox[0] - strip.bbox[0]) < 15
+                      and 0 <= d.bbox[1] - strip.bbox[3] < 6), None)
+        if below is not None:
+            merged = pymupdf.Rect(strip.bbox) | pymupdf.Rect(below.bbox)
+            below.bbox = tuple(round(v, 1) for v in merged)
+            diagrams.remove(strip)
+
+
 def _split_around_board(block: dict, board: pymupdf.Rect) -> list[dict]:
     """Divide um bloco que tem texto acima e abaixo do tabuleiro em partes separadas.
 
@@ -320,11 +397,11 @@ def collect(doc: pymupdf.Document, pages: range | None = None) -> DocumentNotati
         page = doc[pno]
         blocks = [b for b in page.get_text("dict")["blocks"] if b["type"] == 0]
         labels: list[tuple[pymupdf.Rect, str]] = []
+        ink = _vector_glyphs(page)
         for col, whole in _order(blocks, page):
             _, _, diagram_lines, board_rect = _block_parts(whole, vocab)
-            if diagram_lines:
-                board_bbox = tuple(round(v, 1) for v in board_rect)
-                result.diagrams.append(Diagram(pno + 1, board_bbox, read_font_diagram(diagram_lines)))
+            for lines, rect in _split_boards(_diagram_rows(whole)) if diagram_lines else []:
+                result.diagrams.append(Diagram(pno + 1, tuple(round(v, 1) for v in rect), read_font_diagram(lines)))
             for block in _split_around_board(whole, board_rect) if diagram_lines else [whole]:
                 spans, raw_bold, part_diagram, _ = _block_parts(block, vocab)
                 bbox = tuple(round(v, 1) for v in block["bbox"])
@@ -337,9 +414,12 @@ def collect(doc: pymupdf.Document, pages: range | None = None) -> DocumentNotati
                 resolved = resolve_spans(spans, KNOWN_PROFILES)
                 role = ("header" if block["bbox"][1] < 55
                         else "footer" if block["bbox"][1] > page.rect.height - 45 else "text")
+                layout = _block_layout(block)
+                area = pymupdf.Rect(layout.text_rect if layout else block["bbox"]) + (-2, -2, 2, 2)
                 result.regions.append(Region(pno + 1, bbox, col, resolved, _main_mask(resolved, raw_bold), role=role,
-                                             layout=_block_layout(block),
-                                             italic_mask=_main_mask(resolved, _italic_chars(spans))))
+                                             layout=layout, italic_mask=_main_mask(resolved, _italic_chars(spans)),
+                                             vector_glyphs=sum(area.contains(c) for c in ink)))
+        _merge_board_strips(result.diagrams, pno + 1)
         # Rótulos ao lado dos diagramas: número ("1-21") e vez de jogar ("W", "B?").
         for diagram in (d for d in result.diagrams if d.page == pno + 1):
             area = pymupdf.Rect(diagram.bbox)
@@ -380,13 +460,18 @@ def _score(analysis: RegionAnalysis) -> int:
 
 
 def validate(result: DocumentNotation) -> None:
-    """Valida os lances em ordem de leitura, reiniciando a posição a cada diagrama."""
+    """Valida os lances em ordem de leitura, reiniciando a posição a cada diagrama.
+
+    A ordem usa o centro vertical de cada região e de cada tabuleiro: a caixa
+    dos glifos do tabuleiro começa acima da moldura visível, e a última linha
+    do parágrafo de cima pode cair dentro dela (p. 177).
+    """
     events: list[tuple[tuple, str, object]] = []
     for r in result.regions:
         if r.role == "text":
-            events.append(((r.page, r.column, r.bbox[1], 1), "region", r))
+            events.append(((r.page, r.column, (r.bbox[1] + r.bbox[3]) / 2, 1), "region", r))
     for d in result.diagrams:
-        events.append(((d.page, 0 if d.bbox[0] < 255 else 1, d.bbox[1], 0), "diagram", d))
+        events.append(((d.page, 0 if d.bbox[0] < 255 else 1, (d.bbox[1] + d.bbox[3]) / 2, 0), "diagram", d))
     events.sort(key=lambda e: e[0])
     ctx = Context.unknown()
     for pos, (key, kind, item) in enumerate(events):

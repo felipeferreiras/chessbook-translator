@@ -68,7 +68,8 @@ def main() -> None:
         segs = book_segments(notation, doc.metadata.get("title", "") or args.name)
         store.add_book_segments([{"id": b.id, "page": b.page, "section": b.section.label,
                                   "source": b.region.resolved.text, "kind": b.kind,
-                                  "bold": b.region.main_mask, "italic": b.region.italic_mask} for b in segs])
+                                  "bold": b.region.main_mask, "italic": b.region.italic_mask,
+                                  "blocked": b.blocked} for b in segs])
         print(f"projeto criado em {store.dir} (sha256 {store.info['sha256'][:12]}…): {len(segs)} segmentos")
         return
     store = ProjectStore(root, args.id)

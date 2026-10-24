@@ -71,6 +71,9 @@ FLOW_SCALES = (1.0, 0.97, 0.94, 0.91, 0.88, 0.85)
 _TEXT_RANGES = ((0x20, 0x24F), (0x2000, 0x206F), (0x20A0, 0x20CF), (0x2100, 0x214F), (0x2190, 0x21FF),
                 (0x2200, 0x22FF))
 _FIG_CHARS = "♔♕♖♗♘♙♚♛♜♝♞♟⊙△□⇆∞±∓⩲⩱−×+"
+# Prima e prima dupla ficam de fora: a Urbanist usa o mesmo desenho para ’/′ e
+# ”/″, e o PDF gerado passava a devolver "′" ao copiar o texto (p. 2).
+_TEXT_EXCLUDE = {0x2032, 0x2033}
 
 
 def _subset(path: Path, codepoints: set[int]) -> bytes:
@@ -100,7 +103,7 @@ def _subset(path: Path, codepoints: set[int]) -> bytes:
 @functools.cache
 def _font_data() -> tuple[tuple[str, bytes, str], ...]:
     """(nome do arquivo, bytes, regra @font-face) de cada fonte, preparados uma vez por processo."""
-    text = {c for lo, hi in _TEXT_RANGES for c in range(lo, hi + 1)}
+    text = {c for lo, hi in _TEXT_RANGES for c in range(lo, hi + 1)} - _TEXT_EXCLUDE
     out = []
     for family, files in _FONT_FILES.items():
         for path, (weight, style) in zip(files, (("normal", "normal"), ("bold", "normal"),
@@ -264,31 +267,44 @@ def _free_bottom(rect: pymupdf.Rect, obstacles: list[pymupdf.Rect], page: pymupd
 
 
 def _single_line_area(base: pymupdf.Rect, column: tuple[float, float] | None, area: tuple[float, float],
-                      obstacles: list[pymupdf.Rect], gap: float = 3) -> tuple[pymupdf.Rect, bool]:
+                      obstacles: list[pymupdf.Rect], gap: float = 3,
+                      growing: list[pymupdf.Rect] = ()) -> tuple[pymupdf.Rect, bool]:
     """Largura disponível para um bloco de uma linha, que a tradução pode alongar.
 
     Uma linha centrada na coluna ou na página (títulos, nomes de jogadores)
     passa a ocupar a largura toda, centralizada; as demais podem crescer para
-    a direita até o fim da coluna. Nunca sobre outro bloco ou tabuleiro na
-    mesma altura.
+    a direita até o fim da coluna. Nunca sobre um obstáculo fixo (tabuleiro,
+    bloco não traduzido) na mesma altura. Diante de outro bloco traduzido
+    (``growing``), que também pode crescer, cada um vai só até o meio do vão:
+    dois títulos lado a lado se sobrepunham (p. 152 e 298).
     """
+    def same_band(o: pymupdf.Rect) -> bool:
+        return o.y0 < base.y1 - 1 and o.y1 > base.y0 + 1 and not o.intersects(base)
+
+    def right_limit(o: pymupdf.Rect, shared: bool) -> float:
+        return (base.x1 + o.x0) / 2 if shared else o.x0 - gap
+
+    def left_limit(o: pymupdf.Rect, shared: bool) -> float:
+        return (o.x1 + base.x0) / 2 if shared else o.x1 + gap
+
+    beside = [(o, False) for o in obstacles if same_band(o)] + [(o, True) for o in growing if same_band(o)]
     center = (base.x0 + base.x1) / 2
     for lo, hi in (column, area):
         if lo is None or hi is None:
             continue
         if abs(center - (lo + hi) / 2) < 4 and base.width < 0.8 * (hi - lo):
             half = min(center - lo, hi - center)
-            for o in obstacles:
-                if o.y0 < base.y1 - 1 and o.y1 > base.y0 + 1 and not o.intersects(base):
-                    half = min(half, (o.x0 - gap - center) if o.x0 >= center else (center - o.x1 - gap))
+            for o, shared in beside:
+                half = min(half, right_limit(o, shared) - center if o.x0 >= center
+                           else center - left_limit(o, shared))
             if half > base.width / 2:
                 return pymupdf.Rect(center - half, base.y0, center + half, base.y1), True
             return base, True
     out = pymupdf.Rect(base)
     right = column[1] if column else area[1]
-    for o in obstacles:
-        if o.y0 < base.y1 - 1 and o.y1 > base.y0 + 1 and o.x0 >= base.x1 - 1:
-            right = min(right, o.x0 - gap)
+    for o, shared in beside:
+        if o.x0 >= base.x1 - 1:
+            right = min(right, right_limit(o, shared))
     out.x1 = max(base.x1, right)
     return out, False
 
@@ -475,8 +491,8 @@ def compose_page(page: pymupdf.Page, original: pymupdf.Page, jobs: list[BlockJob
             substitutions.add(note)
         base = pymupdf.Rect(lay.text_rect)
         if lay.lines == 1:
-            neighbours = [o for k, o in enumerate(originals) if k != idx] + boards + keep
-            base, centered = _single_line_area(base, columns.get(job.column), (area_x0, area_x1), neighbours)
+            base, centered = _single_line_area(base, columns.get(job.column), (area_x0, area_x1), boards + keep,
+                                               growing=[o for k, o in enumerate(originals) if k != idx])
             if centered:
                 lay = BlockLayout(**{**lay.__dict__, "align": "center"})
                 job = replace(job, layout=lay)
@@ -499,8 +515,15 @@ def compose_page(page: pymupdf.Page, original: pymupdf.Page, jobs: list[BlockJob
                 break
         if flowed is not None:
             for p, (rect, height) in zip(run, flowed, strict=True):
-                results[p.idx] = _draw(page, p, rect, height, scale, archive, font_css)
-                placed.append(pymupdf.Rect(results[p.idx].rect))
+                outcome = _draw(page, p, rect, height, scale, archive, font_css)
+                if not outcome.placed:
+                    # A medida não previu o que a escrita recusou (palavra mais larga que
+                    # um rótulo estreito): o bloco vai para o ajuste no próprio lugar.
+                    obstacles = fixed + [q.exact for q in prepared if q.idx != p.idx and q.idx not in results] + placed
+                    outcome = _place_in_place(page, p, obstacles, archive, font_css)
+                results[p.idx] = outcome
+                if outcome.placed:
+                    placed.append(pymupdf.Rect(outcome.rect))
             continue
         for p in run:  # nem reduzindo o trecho inteiro coube: cada bloco no próprio lugar
             obstacles = fixed + [q.exact for q in prepared if q.idx != p.idx and q.idx not in results] + placed

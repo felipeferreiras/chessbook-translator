@@ -41,9 +41,9 @@ def export_games(notation: DocumentNotation, title: str = "") -> list[ExportedGa
     events: list[tuple[tuple, str, object]] = []
     for r in notation.regions:
         if r.role == "text" and r.analysis is not None:
-            events.append(((r.page, r.column, r.bbox[1], 1), "region", r))
+            events.append(((r.page, r.column, (r.bbox[1] + r.bbox[3]) / 2, 1), "region", r))
     for d in notation.diagrams:
-        events.append(((d.page, 0 if d.bbox[0] < 255 else 1, d.bbox[1], 0), "diagram", d))
+        events.append(((d.page, 0 if d.bbox[0] < 255 else 1, (d.bbox[1] + d.bbox[3]) / 2, 0), "diagram", d))
     events.sort(key=lambda e: e[0])
 
     out: list[ExportedGame] = []

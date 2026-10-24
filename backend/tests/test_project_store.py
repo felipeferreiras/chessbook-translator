@@ -108,3 +108,12 @@ def test_book_segments_start_pending_and_machine_never_overwrites_human(store):
         outcome = store.record_machine(db, {"id": "p1-0", "status": "translated", "text": "Outra 1.e4 e5 2.Nf3 b5.",
                                             "raw_translation": "Outra ⟦1⟧ b5."})
     assert outcome == "kept_human" and store.segment("p1-0").current.kind == "edit"
+
+
+def test_blocked_segment_is_never_sent_and_asks_for_attention(store):
+    reason = "5 glifos desenhados como vetor (lances sem texto extraível): o bloco fica no original para revisão"
+    store.add_book_segments([{"id": "p4-0", "page": 4, "section": "Cap. 3", "source": "After the drawn moves Black wins.",
+                              "blocked": reason}])
+    seg = store.segment("p4-0")
+    assert seg.status == "blocked" and seg.needs_attention and seg.machine_problems == [reason]
+    assert store.sources({4}) == []

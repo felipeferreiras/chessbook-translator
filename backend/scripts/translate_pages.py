@@ -90,20 +90,29 @@ def main() -> None:
     run = TranslationRun([], [])
     # Um lote nunca mistura seções: cada grupo vai com o próprio capítulo e subseção.
     for label, group in groupby(segs, key=lambda b: b.section.label):
-        part = translate([b.source() for b in group], provider, glossary, section=label, style=notation.style,
-                         cache=cache)
-        run.results.extend(part.results)
-        run.calls.extend(part.calls)
+        # Bloco com lances desenhados como vetor não vai ao tradutor: perderia lances.
+        sendable = [b.source() for b in group if not b.blocked]
+        if sendable:
+            part = translate(sendable, provider, glossary, section=label, style=notation.style, cache=cache)
+            run.results.extend(part.results)
+            run.calls.extend(part.calls)
+    by_id = {res.id: res for res in run.results}
 
     rows = []
-    for seg, res in zip(segs, run.results, strict=True):
+    for seg in segs:
+        res = by_id.get(seg.id)
+        if res is None:
+            rows.append({"page": seg.page, "id": seg.id, "section": seg.section.label,
+                         "source": seg.region.resolved.text, "masked": "", "text": None, "raw_translation": None,
+                         "status": "blocked", "problems": [seg.blocked], "warnings": [], "provider": "", "model": ""})
+            continue
         rows.append({"page": seg.page, "id": res.id, "section": seg.section.label,
                      "source": res.source, "masked": res.masked,
                      "text": res.text, "raw_translation": res.raw_translation, "status": res.status.value,
                      "problems": res.problems, "warnings": res.warnings, "provider": res.provider, "model": res.model})
     summary = {
         "provider": provider.name, "model": provider.model, "remote": provider.remote,
-        "pages": sorted(wanted), "segments": len(segs), "by_status": run.counts(),
+        "pages": sorted(wanted), "segments": len(segs), "by_status": {**run.counts(), **({"blocked": sum(1 for r in rows if r["status"] == "blocked")} if any(r["status"] == "blocked" for r in rows) else {})},
         "calls": len(run.calls), "call_errors": [c.error for c in run.calls if c.error],
         "tokens": run.tokens(),
     }
