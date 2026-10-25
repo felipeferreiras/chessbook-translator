@@ -18,8 +18,10 @@ const ASSEMBLY_STATE: Record<string, string> = {
 
 function AssemblyPanel(props: { projectId: string; author: string; onDone: () => void }) {
   const [a, setA] = useState<Assembly | null>(null);
+  const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState("");
-  const load = useCallback(() => api.assembly(props.projectId).then(setA), [props.projectId]);
+  const load = useCallback(() => api.assembly(props.projectId).then((x) => { setA(x); setLoaded(true); }),
+                           [props.projectId]);
   useEffect(() => { load(); }, [load]);
   const running = a?.state === "running";
   useEffect(() => {
@@ -44,8 +46,8 @@ function AssemblyPanel(props: { projectId: string; author: string; onDone: () =>
   return (
     <div className="assembly">
       <div className="row">
-        <button className="primary" disabled={running || !props.author.trim()} onClick={start}>
-          {a ? "Montar de novo" : "Montar PDF traduzido"}
+        <button className="primary" disabled={!loaded || running || !props.author.trim()} onClick={start}>
+          {!loaded ? "Carregando…" : a ? "Montar de novo" : "Montar PDF traduzido"}
         </button>
         {running && <button onClick={async () => setA(await api.cancelAssembly(props.projectId))}>Cancelar</button>}
         {a && <span className={a.state === "done" ? "ok" : a.state === "running" ? "" : "bad"}>

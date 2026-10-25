@@ -19,7 +19,7 @@ conforto de uso**.
 | ✅ | 4 | Glossário (modelo, editor, aplicação contextual), contexto por capítulo, editor de revisão com histórico, avaliação de modelos (Opus 5.5 × Sonnet 5.5 × Gemini × Qwen aberto) — `docs/research/10-fase4.md` | 3 |
 | ✅ | 5 | Layout do livro inteiro (5569/5569 blocos, 441/441 páginas sem pendência na tradução simulada), memória (subconjuntos de fonte, montagem em blocos), tipografia (Urbanist/Liberation), detecção de cortes e sobreposições, aba Qualidade, seleção de motor com previsão de custo — `docs/research/12-fase5-layout.md`; modo B não foi necessário | 4 |
 | ✅ | 6 | Retomada (tarefas órfãs e montagem em partes reaproveitadas: 216 s → 24 s depois de uma edição), reprocessamento seletivo (5 modos, "Retraduzir…" por parágrafo), teto de gasto do projeto e conferência antes de cada seção, OCR com figurinas pelos protótipos do livro (71–84 % dos lances com peça certos, diagramas 111/111, conferência obrigatória) — `docs/research/13-fase6.md`, ADR-0007; Docling avaliado e não adotado (empata na prosa, não lê figurinas, +6 GB) | 5 |
-| 10 | 7 | Livros completos: integridade, desempenho, custo, retomada | 6 |
+| ✅ | 7 | Livro completo traduzido de verdade (Sonnet 5.5, 7,06 pollen, 34 min): 428/440 páginas sem pendência, notação idêntica em todas as traduções, diagramas intactos; sincronização do projeto, auditoria de integridade, tradução em paralelo com reserva no teto (4,4×), retomada real após `kill -9`, recalibração de custo — `docs/research/14-fase7.md` | 6 |
 | 11 | 8 | Interface final, instalação, backup, revisão de segurança, limitações conhecidas | 7 |
 
 ## Decisões do usuário

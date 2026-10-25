@@ -29,7 +29,7 @@ Requisitos: Python 3.12+, [uv](https://docs.astral.sh/uv/), fonte DejaVu Sans
 cd backend
 uv venv .venv
 uv pip install --python .venv/bin/python -e ".[dev,spike]"   # inclui os SDKs de Claude, OpenAI e Gemini
-.venv/bin/python -m pytest -q        # 275 testes
+.venv/bin/python -m pytest -q        # 285 testes
 .venv/bin/ruff check app tests scripts ../spikes
 ```
 
@@ -66,6 +66,8 @@ export CHESSBOOK_STORAGE=/fora/do/repositorio/projetos   # contém o livro e a t
 .venv/bin/python -m scripts.project create meu-livro "Meu livro" LIVRO.pdf
 .venv/bin/python -m scripts.project import meu-livro SAÍDA_TRAD
 .venv/bin/python -m scripts.project assemble meu-livro      # ou pela interface (aba Qualidade)
+.venv/bin/python -m scripts.project audit meu-livro         # integridade do livro inteiro
+.venv/bin/python -m scripts.project sync meu-livro          # depois de atualizar o código: alinha sem perder traduções
 (cd ../frontend && npm install && npm run build)
 .venv/bin/uvicorn app.api.main:app --host 127.0.0.1 --port 8000   # abrir http://127.0.0.1:8000
 ```
@@ -74,6 +76,11 @@ Na aba **Traduzir**: escolha as páginas e o que traduzir (pendentes, com proble
 cria uma versão nova (a edição é recusada se algum lance, casa, número ou
 símbolo mudar); aprovar; histórico com volta a qualquer versão; "Retraduzir…"
 com previsão de custo; glossário do projeto.
+
+Tradução em paralelo: `CHESSBOOK_TRANSLATION_WORKERS` (padrão 3) seções ao
+mesmo tempo, com o custo previsto de cada uma reservado no teto antes do envio.
+O livro de amostra inteiro foi traduzido assim em 34 min por 7,06 pollen
+(`docs/research/14-fase7.md`).
 
 **Livros digitalizados**: `scripts.project create` passa pelo OCR (Tesseract)
 as páginas que só têm imagem quando a maioria do livro é digitalizada (`--ocr

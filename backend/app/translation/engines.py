@@ -52,7 +52,8 @@ class Engine:
 ENGINES: tuple[Engine, ...] = (
     Engine("sonnet-5.5", "Claude Sonnet 5.5", "anthropic/claude-sonnet-5.5",
            "Qualidade igual ou melhor que o Gemini, ~2× mais rápido, mesmo custo.", status="recomendado",
-           input_factor=1.89, output_factor=3.04, uncertainty=0.25, seconds_per_call=17,
+           # recalibrado no livro inteiro (2026-10-25: 5569 segmentos, real = 0,81 × a previsão anterior)
+           input_factor=1.56, output_factor=2.43, uncertainty=0.2, seconds_per_call=15,
            fallback_price=(1.5e-6, 7.5e-6)),
     Engine("opus-5.5", "Claude Opus 5.5", "anthropic/claude-opus-5.5",
            "O português mais natural da comparação; ~1,7× o custo do Sonnet.",
