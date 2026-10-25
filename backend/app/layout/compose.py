@@ -351,10 +351,19 @@ def away_from(rect: pymupdf.Rect, boards: list[pymupdf.Rect], margin: float = 0.
     for board in boards:
         if not out.intersects(board):
             continue
-        if (out.y0 + out.y1) / 2 >= (board.y0 + board.y1) / 2:
-            out.y0 = max(out.y0, board.y1 + margin)
+        # Acima ou abaixo do tabuleiro: a faixa que sobra ainda toca todas as letras da linha, e a redação
+        # remove letra que toque a área. Só um rótulo ao lado do diagrama ("W?"), que a faixa vertical
+        # deixaria vazio, é cortado pela lateral.
+        def area(r: pymupdf.Rect) -> float:
+            return r.width * r.height if not r.is_empty else -1
+
+        vertical = max((pymupdf.Rect(out.x0, out.y0, out.x1, min(out.y1, board.y0 - margin)),
+                        pymupdf.Rect(out.x0, max(out.y0, board.y1 + margin), out.x1, out.y1)), key=area)
+        if not vertical.is_empty and vertical.height >= 0.25 * out.height:
+            out = vertical
         else:
-            out.y1 = min(out.y1, board.y0 - margin)
+            out = max((pymupdf.Rect(out.x0, out.y0, min(out.x1, board.x0 - margin), out.y1),
+                       pymupdf.Rect(max(out.x0, board.x1 + margin), out.y0, out.x1, out.y1), vertical), key=area)
     return out
 
 
@@ -472,7 +481,8 @@ def compose_page(page: pymupdf.Page, original: pymupdf.Page, jobs: list[BlockJob
     scanned = any(j.layout.font == OCR_FONT for j in jobs)
     for job in jobs:
         for r in job.layout.span_rects:
-            rect = away_from(pymupdf.Rect(r), boards)
+            # folga lateral: um ponto final na borda da caixa escapava da redação (medido no livro real)
+            rect = away_from(pymupdf.Rect(r) + (-0.6, 0, 0.6, 0), boards)
             if rect.is_empty or rect.height < 1:
                 continue
             redacted.setdefault(job.region_id, []).append(rect)
@@ -480,8 +490,15 @@ def compose_page(page: pymupdf.Page, original: pymupdf.Page, jobs: list[BlockJob
     page.apply_redactions(images=pymupdf.PDF_REDACT_IMAGE_PIXELS if scanned else pymupdf.PDF_REDACT_IMAGE_NONE,
                           graphics=pymupdf.PDF_REDACT_LINE_ART_NONE, text=pymupdf.PDF_REDACT_TEXT_REMOVE)
     # Texto original que sobreviveu à redação ficaria sobreposto à tradução.
-    leftovers = [rid for rid, rects in redacted.items()
-                 if any(page.get_text("text", clip=r).strip() or (scanned and _ink(page, r) > 0.02) for r in rects)]
+    # Conferido na área original inteira de cada trecho (não só na parte apagada): um rótulo ao lado do
+    # diagrama cuja área a redação não pôde alcançar continuaria visível debaixo da tradução.
+    def survivors(r: pymupdf.Rect) -> bool:
+        return any(not any(b.contains(pymupdf.Point((w[0] + w[2]) / 2, (w[1] + w[3]) / 2)) for b in boards)
+                   for w in page.get_text("words", clip=r))
+
+    leftovers = sorted({job.region_id for job in jobs
+                        if any(survivors(pymupdf.Rect(r)) for r in job.layout.span_rects)}
+                       | {rid for rid, rects in redacted.items() if scanned and any(_ink(page, r) > 0.02 for r in rects)})
     # (a cor de fundo é clara: "tinta" é só o que ficou abaixo de 50 % de cinza)
 
     columns = _column_bounds(jobs, page)

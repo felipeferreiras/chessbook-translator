@@ -103,6 +103,8 @@ def parse_output(raw: str, expected_ids: list[str]) -> dict[str, str]:
     # Cada tradução ainda passa pela proteção, então aceitar o que veio a mais não arrisca a notação.
     decoder = json.JSONDecoder()
     objects, pos = [], 0
+    if text and text[0] != "{" and "{" in text:  # "Aqui está a tradução: {...}": pula o preâmbulo
+        pos = text.index("{")
     while pos < len(text):
         try:
             data, end = decoder.raw_decode(text, pos)

@@ -334,6 +334,7 @@ def test_moderation_model_is_flagged():
 @pytest.mark.parametrize("raw", [
     '{"translations": [{"id": "p1", "text": "A"}]}\n{"translations": [{"id": "p2", "text": "B"}]}',
     '{"translations": [{"id": "p1", "text": "A"}, {"id": "p2", "text": "B"}]}\nEspero ter ajudado.',
+    'Aqui está: {"translations": [{"id": "p1", "text": "A"}, {"id": "p2", "text": "B"}]}',
 ])
 def test_json_followed_by_extra_data_is_read(raw):
     from app.translation.provider import parse_output

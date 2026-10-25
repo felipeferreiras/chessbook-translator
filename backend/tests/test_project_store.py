@@ -158,6 +158,16 @@ def test_sync_with_a_new_extraction_keeps_translations_and_history(bare):
     assert {s.id for _, s in bare.sources({1})} == {"p1-0", "p1-1"}
 
 
+def test_sync_keeps_a_refused_translation_flagged(bare):
+    bare.add_book_segments([{"id": "p1-0", "page": 1, "source": "White wins after the pin."}])
+    with bare._db() as db:
+        bare.record_machine(db, {"id": "p1-0", "status": "needs_review", "text": None, "raw_translation": "x",
+                                 "problems": ["números divergem"]})
+    bare.sync_segments([{"id": "p1-0", "page": 1, "source": "White wins after the pin."}], "teste")
+    seg = bare.segment("p1-0")
+    assert seg.status == "needs_review" and seg.machine_problems == ["números divergem"] and seg.needs_attention
+
+
 def test_sync_resets_translation_when_the_protected_text_changes(bare):
     bare.add_book_segments([{"id": "p1-0", "page": 1, "source": "Play 1.e4 now.", "bold": [False] * 14}])
     with bare._db() as db:

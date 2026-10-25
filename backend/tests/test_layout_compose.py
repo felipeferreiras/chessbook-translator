@@ -225,3 +225,20 @@ def test_two_single_lines_side_by_side_share_the_gap():
     a, _ = _single_line_area(left, (48, 333), (48, 473), [], growing=[right])
     b, _ = _single_line_area(right, (267, 473), (48, 473), [], growing=[left])
     assert a.x1 <= b.x0
+
+
+def test_label_beside_the_board_is_removed_and_a_kept_original_is_reported():
+    """Rótulo ao lado do diagrama cuja caixa invade a área do tabuleiro: apagado pelo lado, não deixado debaixo."""
+    doc = pymupdf.open()
+    page = doc.new_page(width=300, height=300)
+    board = pymupdf.Rect(80, 60, 230, 210)
+    page.draw_rect(board, color=(0, 0, 0), width=1)
+    page.insert_text((70, 120), "Wx?", fontsize=10, fontname="tiro")  # invade a caixa do tabuleiro
+    original = pymupdf.open()
+    original.insert_pdf(doc)
+    span = page.get_text("dict")["blocks"][0]["lines"][0]["spans"][0]
+    rect = pymupdf.Rect(span["bbox"])
+    assert rect.intersects(board) and not away_from(rect, [board]).is_empty
+    lay = BlockLayout(tuple(rect), [tuple(rect)], "Times-Roman", 10.0, 0, False, False, "left", 0.0, 12.0, 1)
+    report = compose_page(page, original[0], [BlockJob("p1-0", lay, 0, "Bx?")], [board], [], 1)
+    assert report.leftover_original == [] and "Wx?" not in page.get_text()

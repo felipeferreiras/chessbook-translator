@@ -7,6 +7,7 @@ tem o mesmo id na tradução, na montagem, no relatório e no projeto.
 
 from __future__ import annotations
 
+import re
 from collections import Counter
 from dataclasses import dataclass
 
@@ -14,6 +15,10 @@ from app.translation.service import SourceSegment
 
 from .notation_pass import DocumentNotation, Region
 from .sections import SectionInfo, assign_sections
+
+# Marcas ao lado do diagrama: vez de jogar ("W", "B?") e tipo de exercício ("Play"). Não são traduzidas:
+# o modelo as trocava de forma inconsistente ("W?" virou "As brancas?" e até "B?", que muda o sentido).
+DIAGRAM_LABEL = re.compile(r"^(?:[WB][?!]*|Play|Draw|Win)(?:\s+(?:[WB][?!]*|Play|Draw|Win))*$")
 
 
 @dataclass
@@ -25,6 +30,8 @@ class BookSegment:
 
     @property
     def kind(self) -> str:
+        if DIAGRAM_LABEL.match(self.region.resolved.text.strip()):
+            return "label"
         return "heading" if self.section.heading_level else "paragraph"
 
     @property

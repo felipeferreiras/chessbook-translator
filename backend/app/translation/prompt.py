@@ -13,7 +13,7 @@ import json
 from .glossary import Glossary
 from .provider import Segment, TranslationRequest
 
-PROMPT_VERSION = "2026-10-24.1"
+PROMPT_VERSION = "2026-10-25.1"
 
 _RULES = """\
 Você é tradutor técnico especializado em literatura de xadrez. Traduza do inglês
@@ -33,9 +33,12 @@ Regras obrigatórias:
    Manual" permanece como está). Para cidades, países e competições, use a
    forma portuguesa consagrada quando existir (Hamburg → Hamburgo, Moscow →
    Moscou, Czechoslovakia → Tchecoslováquia, USSR → URSS); sem forma
-   consagrada, mantenha o original. Abreviações de competição: "ol" →
-   "ol." (Olimpíada), "ch" → "camp." (campeonato), "chsf" → "semif. camp.",
-   "zt" → "torneio zonal", "izt" → "interzonal".
+   consagrada, mantenha o original. Cabeçalhos de partida ("Jogador –
+   Jogador", competição, local, ano) ficam ao lado dos diagramas, em espaço
+   apertado: mantenha as abreviações curtas e o cabeçalho com no máximo o
+   tamanho do original ("ch" → "camp.", "tt" → "eq.", "m" → "m", "ol" → "ol.",
+   "wm" → "mundial", "ct" → "cand.", "zt" → "zonal", "izt" → "izt",
+   "chsf"/"cmsf" → "semif.", "jr" → "jr").
 6. "White"/"Black" como lados são "as brancas"/"as pretas" (concordância no
    plural). "diagram" é "diagrama".
 7. O campo "glossary" traz os termos que aparecem neste lote, com a tradução

@@ -226,7 +226,7 @@ class ProjectStore:
         with self._db() as db:
             for ordinal, seg in enumerate(segments):
                 masked = protect(seg["source"], style, list(seg.get("bold", [])), list(seg.get("italic", []))).masked
-                status = "pending" if _needs_translation(masked) else "not_needed"  # só notação: nunca vai ao motor
+                status = "pending" if _needs_translation(masked) and seg.get("kind") != "label" else "not_needed"
                 problems = []
                 if seg.get("blocked"):  # lances desenhados como vetor: não traduzir automaticamente
                     status, problems = "blocked", [seg["blocked"]]
@@ -292,7 +292,8 @@ class ProjectStore:
             for ordinal, seg in enumerate(segments):
                 bold, italic = list(seg.get("bold", [])), list(seg.get("italic", []))
                 masked = protect(seg["source"], style, bold, italic).masked
-                status = "pending" if _needs_translation(masked) else "not_needed"
+                # só notação, ou marca do diagrama ("W?"): nunca vai ao motor
+                status = "pending" if _needs_translation(masked) and seg.get("kind") != "label" else "not_needed"
                 problems = [seg["blocked"]] if seg.get("blocked") else []
                 if seg.get("blocked"):
                     status = "blocked"
@@ -315,7 +316,13 @@ class ProjectStore:
                                " machine_problems_json=? WHERE id=?", (status, json.dumps(problems), seg["id"]))
                     self._log(db, "segment", seg["id"], "source_changed", old_masked, masked, author)
                     report["retranslate"] += 1
-                elif not prev["current_version"]:  # nunca traduzido: o estado vem da extração nova
+                elif seg.get("kind") == "label" and prev["current_version"]:  # marca do diagrama: volta ao original
+                    db.execute("UPDATE segment SET current_version=NULL, approved=0, status='not_needed',"
+                               " machine_problems_json='[]' WHERE id=?", (seg["id"],))
+                    self._log(db, "segment", seg["id"], "label_untranslated", None, None, author)
+                    report["retranslate"] += 1
+                elif not prev["current_version"] and prev["status"] not in ("needs_review", "failed"):
+                    # nunca tentado: o estado vem da extração nova (recusa ou falha de uma tentativa ficam)
                     db.execute("UPDATE segment SET status=?, machine_problems_json=? WHERE id=?",
                                (status, json.dumps(problems), seg["id"]))
                 report["kept"] += 1
