@@ -117,3 +117,54 @@ def test_blocked_segment_is_never_sent_and_asks_for_attention(store):
     seg = store.segment("p4-0")
     assert seg.status == "blocked" and seg.needs_attention and seg.machine_problems == [reason]
     assert store.sources({4}) == []
+
+
+@pytest.fixture
+def bare(tmp_path):
+    pdf = tmp_path / "livro.pdf"
+    pdf.write_bytes(syn.build_page("fan_unicode").pdf_bytes)
+    return ProjectStore.create(tmp_path / "storage", "vazio", "Vazio", pdf, pages=1)
+
+
+def test_sync_with_a_new_extraction_keeps_translations_and_history(bare):
+    """Código novo dividiu um parágrafo em dois: as traduções acompanham o texto, não o id."""
+    bare.add_book_segments([
+        {"id": "p1-0", "page": 1, "source": "White wins after the pin."},
+        {"id": "p1-1", "page": 1, "source": "Black resigned."},
+        {"id": "p1-2", "page": 1, "source": "A forgotten caption."},
+        {"id": "p1-3", "page": 1, "source": "An old note."},
+    ])
+    with bare._db() as db:
+        for sid, text in (("p1-1", "As pretas abandonaram."), ("p1-3", "Uma nota antiga.")):
+            bare.record_machine(db, {"id": sid, "status": "translated", "text": text,
+                                      "raw_translation": text, "warnings": []})
+    bare.edit("p1-1", "As pretas abandonaram a partida.", "revisor")
+    report = bare.sync_segments([
+        {"id": "p1-0", "page": 1, "source": "White wins after the pin."},
+        {"id": "p1-1", "page": 1, "source": "A new heading."},           # novo, entra no lugar do id antigo
+        {"id": "p1-2", "page": 1, "source": "Black resigned."},          # o traduzido mudou de posição
+        {"id": "p1-3", "page": 1, "source": "1.e4 e5"},                   # só notação
+    ], "teste")
+    assert report == {"kept": 2, "renamed": 1, "added": 2, "removed": 1, "obsolete": 1, "retranslate": 0}
+    moved = bare.segment("p1-2")
+    assert moved.current.text == "As pretas abandonaram a partida." and len(bare.history("p1-2")) == 2
+    assert any(r["entity_id"] == "p1-2" and r["kind"] == "edit" for r in bare.revisions("segment"))
+    assert [s.id for s in bare.segments()] == ["p1-0", "p1-1", "p1-2", "p1-3"]
+    assert bare.segment("p1-1").status == "pending" and bare.segment("p1-3").status == "not_needed"
+    # "An old note." tinha tradução: fica guardado como obsoleto, fora da tradução e da montagem
+    assert all(s["id"] != "p1-3" or s["source"] == "1.e4 e5" for s in bare.export_result()["segments"])
+    with bare._db() as db:
+        assert db.execute("SELECT COUNT(*) FROM segment WHERE status='obsolete'").fetchone()[0] == 1
+    assert {s.id for _, s in bare.sources({1})} == {"p1-0", "p1-1"}
+
+
+def test_sync_resets_translation_when_the_protected_text_changes(bare):
+    bare.add_book_segments([{"id": "p1-0", "page": 1, "source": "Play 1.e4 now.", "bold": [False] * 14}])
+    with bare._db() as db:
+        bare.record_machine(db, {"id": "p1-0", "status": "translated", "text": "Jogue 1.e4 agora.",
+                                  "raw_translation": "Jogue ⟦0⟧ agora.", "warnings": []})
+    italic = [True] * 4 + [False] * 10  # agora "Play" vem em itálico: a prosa protegida muda
+    report = bare.sync_segments([{"id": "p1-0", "page": 1, "source": "Play 1.e4 now.", "italic": italic}], "teste")
+    assert report["retranslate"] == 1
+    seg = bare.segment("p1-0")
+    assert seg.current is None and seg.status == "pending" and len(bare.history("p1-0")) == 1

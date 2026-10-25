@@ -239,6 +239,95 @@ class ProjectStore:
                 added += cur.rowcount
         return added
 
+    def sync_segments(self, segments: list[dict], author: str = "sistema") -> dict:
+        """Alinha os segmentos do projeto com uma extração nova (código atualizado), sem perder traduções.
+
+        Cada segmento novo é casado com um antigo de mesmo texto de origem
+        (mesmo id, senão mesma página, senão qualquer página). Um casamento com
+        id diferente renomeia o antigo, com versões, histórico e tarefas. Se o
+        texto protegido mudou (negrito, itálico), a tradução antiga não serve
+        mais: fica no histórico e o segmento volta a pendente. Segmentos antigos
+        sem par são apagados se nunca foram traduzidos; os traduzidos ficam
+        como ``obsolete`` (fora da tradução e da montagem), com o histórico.
+        """
+        style = self.style
+        report = {"kept": 0, "renamed": 0, "added": 0, "removed": 0, "obsolete": 0, "retranslate": 0}
+        with self._db() as db:
+            old = {r["id"]: r for r in db.execute(
+                "SELECT s.*, (SELECT COUNT(*) FROM translation t WHERE t.segment_id = s.id) AS versions"
+                " FROM segment s WHERE s.status != 'obsolete'")}
+            by_source: dict[str, list[str]] = {}
+            for oid, r in old.items():
+                by_source.setdefault(r["source"], []).append(oid)
+            match: dict[str, str] = {}
+            used: set[str] = set()
+            for seg in segments:  # 1º mesmo id e texto
+                if seg["id"] in old and old[seg["id"]]["source"] == seg["source"]:
+                    match[seg["id"]] = seg["id"]
+                    used.add(seg["id"])
+            for seg in segments:  # 2º mesmo texto, preferindo a mesma página
+                if seg["id"] in match:
+                    continue
+                options = [o for o in by_source.get(seg["source"], []) if o not in used]
+                options.sort(key=lambda o: old[o]["page"] != seg["page"])
+                if options:
+                    match[seg["id"]] = options[0]
+                    used.add(options[0])
+            for oid, r in old.items():  # sem par
+                if oid in used:
+                    continue
+                if r["versions"]:
+                    db.execute("UPDATE segment SET status='obsolete' WHERE id=?", (oid,))
+                    self._rename(db, oid, f"obsoleto-{oid}-{_now()}")
+                    report["obsolete"] += 1
+                else:
+                    db.execute("DELETE FROM segment WHERE id=?", (oid,))
+                    report["removed"] += 1
+            renames = {o: n for n, o in match.items() if o != n}
+            for o in renames:  # em duas etapas: os ids novos podem coincidir com antigos ainda não renomeados
+                self._rename(db, o, "tmp:" + o)
+            for o, n in renames.items():
+                self._rename(db, "tmp:" + o, n)
+            report["renamed"] = len(renames)
+            for ordinal, seg in enumerate(segments):
+                bold, italic = list(seg.get("bold", [])), list(seg.get("italic", []))
+                masked = protect(seg["source"], style, bold, italic).masked
+                status = "pending" if _needs_translation(masked) else "not_needed"
+                problems = [seg["blocked"]] if seg.get("blocked") else []
+                if seg.get("blocked"):
+                    status = "blocked"
+                fields = (seg["page"], ordinal, seg.get("section", ""), json.dumps(bold), json.dumps(italic),
+                          seg.get("kind", "paragraph"), json.dumps(list(seg.get("flags", []))))
+                if seg["id"] not in match:
+                    db.execute("INSERT INTO segment (id, page, ordinal, section, bold_json, italic_json, kind,"
+                               " source_flags_json, source, status, machine_problems_json)"
+                               " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                               (seg["id"], *fields, seg["source"], status, json.dumps(problems)))
+                    report["added"] += 1
+                    continue
+                prev = old[match[seg["id"]]]
+                db.execute("UPDATE segment SET page=?, ordinal=?, section=?, bold_json=?, italic_json=?, kind=?,"
+                           " source_flags_json=? WHERE id=?", (*fields, seg["id"]))
+                old_masked = protect(prev["source"], style, json.loads(prev["bold_json"]),
+                                     json.loads(prev["italic_json"])).masked
+                if prev["versions"] and old_masked != masked:  # a tradução guardada não casa com a nova proteção
+                    db.execute("UPDATE segment SET current_version=NULL, approved=0, status=?,"
+                               " machine_problems_json=? WHERE id=?", (status, json.dumps(problems), seg["id"]))
+                    self._log(db, "segment", seg["id"], "source_changed", old_masked, masked, author)
+                    report["retranslate"] += 1
+                elif not prev["current_version"]:  # nunca traduzido: o estado vem da extração nova
+                    db.execute("UPDATE segment SET status=?, machine_problems_json=? WHERE id=?",
+                               (status, json.dumps(problems), seg["id"]))
+                report["kept"] += 1
+            self._log(db, "project", self.id, "sync", None, json.dumps(report), author)
+        return report
+
+    def _rename(self, db: sqlite3.Connection, old: str, new: str) -> None:
+        db.execute("UPDATE segment SET id=? WHERE id=?", (new, old))
+        db.execute("UPDATE translation SET segment_id=? WHERE segment_id=?", (new, old))
+        db.execute("UPDATE job_segment SET segment_id=? WHERE segment_id=?", (new, old))
+        db.execute("UPDATE revision SET entity_id=? WHERE entity='segment' AND entity_id=?", (new, old))
+
     def record_machine(self, db: sqlite3.Connection, seg: dict, author: str = "sistema") -> str:
         """Registra o resultado da tradução automática de um segmento existente.
 
@@ -311,7 +400,7 @@ class ProjectStore:
 
     def segments(self, page: int | None = None) -> list[SegmentView]:
         with self._db() as db:
-            rows = db.execute("SELECT * FROM segment" + (" WHERE page=?" if page is not None else "")
+            rows = db.execute("SELECT * FROM segment WHERE status != 'obsolete'" + (" AND page=?" if page is not None else "")
                               + " ORDER BY ordinal", (() if page is None else (page,))).fetchall()
             return [self._view(db, r) for r in rows]
 
@@ -326,7 +415,8 @@ class ProjectStore:
         """Páginas com segmentos: total, traduzidos (com alguma versão), aprovados."""
         with self._db() as db:
             rows = db.execute("SELECT page, COUNT(*) n, SUM(approved) ok, SUM(current_version IS NOT NULL) tr,"
-                              " SUM(status = 'not_needed') nn FROM segment GROUP BY page ORDER BY page")
+                              " SUM(status = 'not_needed') nn FROM segment WHERE status != 'obsolete'"
+                              " GROUP BY page ORDER BY page")
             return [{"page": r["page"], "segments": r["n"], "approved": r["ok"] or 0, "translated": r["tr"] or 0,
                      "notation_only": r["nn"] or 0} for r in rows]
 
@@ -338,7 +428,8 @@ class ProjectStore:
         for r in rows:
             if r["page"] not in pages:
                 continue
-            if only_pending and (r["current_version"] is not None or r["status"] in ("not_needed", "blocked")):
+            if r["status"] == "obsolete" or (
+                    only_pending and (r["current_version"] is not None or r["status"] in ("not_needed", "blocked"))):
                 continue
             out.append((r["section"], SourceSegment(r["id"], r["source"], kind=r["kind"],
                                                     bold=tuple(json.loads(r["bold_json"])),
@@ -366,6 +457,7 @@ class ProjectStore:
         with self._db() as db:
             rows = db.execute("SELECT s.*, t.kind AS vkind, t.warnings_json, t.glossary_sig FROM segment s"
                               " LEFT JOIN translation t ON t.segment_id = s.id AND t.version = s.current_version"
+                              " WHERE s.status != 'obsolete'"
                               " ORDER BY s.ordinal").fetchall()
         for r in rows:
             if (r["page"] not in pages and mode != "ids") or r["id"] in exclude:
@@ -500,7 +592,7 @@ class ProjectStore:
         """Mesmo formato de ``resultado.json``, com o texto atual de cada segmento (para ``assemble_pdf``)."""
         segments = []
         with self._db() as db:
-            for row in db.execute("SELECT * FROM segment ORDER BY ordinal").fetchall():
+            for row in db.execute("SELECT * FROM segment WHERE status != 'obsolete' ORDER BY ordinal").fetchall():
                 v = None
                 if row["current_version"]:
                     v = db.execute("SELECT * FROM translation WHERE segment_id=? AND version=?",
