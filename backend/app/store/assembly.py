@@ -66,9 +66,12 @@ def _view(store: ProjectStore, row) -> Assembly:
             progress = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             progress = None
-    with store._db() as db:
-        last_change = db.execute("SELECT MAX(created_at) FROM translation").fetchone()[0]
-    outdated = row["state"] == "done" and bool(last_change) and last_change > row["created_at"]
+    outdated = False
+    if row["state"] == "done" and (_out(store) / "relatorio.json").exists():
+        from app.layout.assemble import content_hash
+
+        summary = json.loads((_out(store) / "relatorio.json").read_text(encoding="utf-8"))["summary"]
+        outdated = summary.get("content_sha256") != content_hash(store.export_result())
     return Assembly(row["id"], row["state"], row["author"], row["created_at"], row["finished_at"], row["error"],
                     json.loads(row["summary_json"]) if row["summary_json"] else None, progress, outdated)
 

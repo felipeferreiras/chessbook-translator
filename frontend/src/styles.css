@@ -142,3 +142,4 @@ button.primary { background: var(--accent); color: var(--panel); border-color: v
 .assembly progress { width: 100%; margin: 8px 0 2px; }
 .source-flags { margin: 8px 0 0; font-size: 13px; color: var(--bad); }
 .source-flags ul { margin: 4px 0 0; padding-left: 18px; color: var(--muted); }
+.audit { list-style: none; padding: 0; margin: 8px 0 0; font-size: 13px; display: grid; gap: 3px; }

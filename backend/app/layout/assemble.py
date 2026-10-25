@@ -53,6 +53,14 @@ def code_version() -> str:
     return h.hexdigest()[:16]
 
 
+def content_hash(result: dict) -> str:
+    """Impressão digital do texto que vai para a página: muda com qualquer tradução, edição ou reversão."""
+    h = hashlib.sha256()
+    for s in result["segments"]:
+        h.update(json.dumps([s["id"], s["status"], s["text"], s.get("raw_translation")], ensure_ascii=False).encode())
+    return h.hexdigest()
+
+
 def _runs(mask: list[bool], offset: int) -> list[tuple[int, int]]:
     """Trechos contíguos marcados de ``mask``, deslocados por ``offset``."""
     out: list[tuple[int, int]] = []
@@ -224,6 +232,7 @@ def assemble(pdf: Path, result: dict, out: Path, pages: list[int] | None = None,
         "chunks": len(chunks),
         "chunks_reused": state["chunks_reused"],
         "code_version": version,
+        "content_sha256": content_hash(result),
         "segments_by_status": dict(status_count),
         "blocks": sum(len(r.blocks) for r in reports),
         "blocks_placed": sum(b.placed for r in reports for b in r.blocks),

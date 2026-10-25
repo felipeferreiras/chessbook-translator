@@ -12,7 +12,7 @@ from pathlib import Path
 
 class TranslationCache:
     def __init__(self, path: Path | str = ":memory:"):
-        self.db = sqlite3.connect(str(path))
+        self.db = sqlite3.connect(str(path), timeout=30)  # várias seções podem gravar ao mesmo tempo
         self.db.execute(
             "CREATE TABLE IF NOT EXISTS translation_cache ("
             " key TEXT PRIMARY KEY, provider TEXT, model TEXT, text TEXT,"

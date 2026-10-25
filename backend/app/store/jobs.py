@@ -15,7 +15,11 @@ Retomada: uma tarefa ativa cujo processo morreu (servidor encerrado, queda de
 energia) aparece como ``interrupted``. ``resume_job`` cria uma tarefa nova com
 o mesmo motor e seleção, pulando os segmentos que a anterior já tratou.
 
-Cancelar vale entre seções. Uma tarefa por projeto de cada vez.
+Paralelismo: até ``CHESSBOOK_TRANSLATION_WORKERS`` seções ao mesmo tempo
+(padrão 3), com o custo previsto de cada uma reservado no teto antes do envio.
+
+Cancelar vale entre seções (as que já foram enviadas terminam e são gravadas).
+Uma tarefa por projeto de cada vez.
 """
 
 from __future__ import annotations
@@ -27,6 +31,7 @@ import threading
 import uuid
 from collections import Counter
 from collections.abc import Callable
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from itertools import groupby
@@ -179,7 +184,7 @@ def effective_budget(store: ProjectStore, budget: float) -> float:
 def start_job(store: ProjectStore, eng: Engine, pages: set[int], pages_spec: str, budget: float, author: str,
               provider: TranslationProvider, prices: Prices, estimate: float | None = None,
               background: bool = True, mode: str = "pending", ids: frozenset[str] = frozenset(),
-              fresh: bool = False, resumed_from: int | None = None) -> Job:
+              fresh: bool = False, resumed_from: int | None = None, workers: int | None = None) -> Job:
     """Cria a tarefa e a executa (em outra thread, se ``background``)."""
     with _guard:
         lock = _locks.setdefault(str(store.db_path), threading.Lock())
@@ -206,7 +211,7 @@ def start_job(store: ProjectStore, eng: Engine, pages: set[int], pages_spec: str
 
     def work() -> None:
         try:
-            _run(store, job_id, items, eng, provider, prices, fresh)
+            _run(store, job_id, items, eng, provider, prices, fresh, workers or default_workers())
         finally:
             _running.discard((str(store.db_path), job_id))
             lock.release()
@@ -230,7 +235,7 @@ def resume_plan(store: ProjectStore, job_id: int) -> tuple[Job, set[int], frozen
 
 def resume_job(store: ProjectStore, job_id: int, author: str, provider: TranslationProvider, prices: Prices,
                eng: Engine, budget: float | None = None, estimate: float | None = None,
-               background: bool = True) -> Job:
+               background: bool = True, workers: int | None = None) -> Job:
     """Continua uma tarefa interrompida, cancelada ou parada pelo teto, sem repetir o que ela já tratou."""
     old, pages, _ = resume_plan(store, job_id)
     if budget is None:
@@ -238,11 +243,25 @@ def resume_job(store: ProjectStore, job_id: int, author: str, provider: Translat
         if budget <= 0:
             raise StoreError("o teto da tarefa original já foi usado; informe um novo teto para continuar")
     return start_job(store, eng, pages, old.pages, budget, author, provider, prices, estimate, background,
-                     old.mode, frozenset(old.segment_ids or ()), old.fresh, resumed_from=job_id)
+                     old.mode, frozenset(old.segment_ids or ()), old.fresh, resumed_from=job_id, workers=workers)
+
+
+def default_workers() -> int:
+    """Seções traduzidas ao mesmo tempo (``CHESSBOOK_TRANSLATION_WORKERS``, 1–8; padrão 3)."""
+    try:
+        return max(1, min(8, int(os.environ.get("CHESSBOOK_TRANSLATION_WORKERS", "3"))))
+    except ValueError:
+        return 3
 
 
 def _run(store: ProjectStore, job_id: int, items, eng: Engine, provider: TranslationProvider, prices: Prices,
-         fresh: bool = False) -> None:
+         fresh: bool = False, workers: int = 1) -> None:
+    """Traduz seção por seção, até ``workers`` seções ao mesmo tempo.
+
+    Teto: antes de enviar uma seção, o custo previsto dela é **reservado**; só
+    vai se gasto real + reservas + previsto couber no teto. Com várias seções em
+    andamento, o teto continua valendo para o conjunto, não para cada uma.
+    """
     def update(**fields) -> None:
         sets = ", ".join(f"{k}=?" for k in fields)
         with store._db() as db:
@@ -254,49 +273,71 @@ def _run(store: ProjectStore, job_id: int, items, eng: Engine, provider: Transla
 
     price_in, price_out = prices.by_model.get(eng.model, eng.fallback_price)
     budget = get_job(store, job_id).budget
+    lock = threading.Lock()
+    totals = {"done": 0, "tokens_in": 0, "tokens_out": 0, "cost": 0.0, "reserved": 0.0}
     counts: Counter[str] = Counter()
-    done = tokens_in = tokens_out = 0
-    cost = 0.0
+    stop: dict[str, str] = {}
     update(state="running", heartbeat_at=_now(), error=None)
+    glossary = store.glossary()
+    style = store.style
+
+    def section(label: str, sources: list, predicted: float) -> None:
+        cache = TranslationCache(store.dir / "cache.sqlite")  # uma conexão por thread (sqlite)
+        run = translate(sources, provider, glossary, section=label, style=style, cache=cache, cache_read=not fresh)
+        with store._db() as db:
+            outcomes = []
+            for res in run.results:
+                outcome = store.record_machine(db, {
+                    "id": res.id, "status": res.status.value, "text": res.text,
+                    "raw_translation": res.raw_translation, "warnings": res.warnings, "problems": res.problems,
+                    "provider": res.provider, "model": res.model,
+                    "glossary_sig": glossary_signature(res.masked, glossary)}, author=f"motor {eng.id}")
+                outcomes.append(outcome)
+                db.execute("INSERT OR REPLACE INTO job_segment VALUES (?,?,?)", (job_id, res.id, outcome))
+        t = run.tokens()
+        with lock:
+            counts.update(outcomes)
+            totals["tokens_in"] += t["input"]
+            totals["tokens_out"] += t["output"]
+            totals["cost"] = totals["tokens_in"] * price_in + totals["tokens_out"] * price_out
+            totals["reserved"] -= predicted
+            totals["done"] += len(sources)
+            update(done=totals["done"], tokens_in=totals["tokens_in"], tokens_out=totals["tokens_out"],
+                   cost=round(totals["cost"], 5), counts_json=json.dumps(counts), heartbeat_at=_now())
+            if totals["cost"] > budget and "reason" not in stop:
+                stop["reason"] = (f"gasto real {totals['cost']:.4f} passou do teto {budget:.4f}; "
+                                  "o que já foi traduzido está salvo")
+
     try:
-        glossary = store.glossary()
         cache = TranslationCache(store.dir / "cache.sqlite")
-        style = store.style
-        for label, group in groupby(items, key=lambda x: x[0]):
-            if state() == "cancel_requested":
-                update(state="cancelled", finished_at=_now(), counts_json=json.dumps(counts))
-                return
-            sources = [s for _, s in group]
-            predicted = estimate([(label, sources)], glossary, eng, prices, style, None if fresh else cache).cost
-            if cost + predicted > budget:
-                update(state="stopped_budget", finished_at=_now(),
-                       error=f"o próximo trecho ({label or 'sem seção'}, previsto {predicted:.4f}) passaria do teto "
-                             f"{budget:.4f} (gasto até aqui {cost:.4f}); nada dele foi enviado")
-                return
-            run = translate(sources, provider, glossary, section=label, style=style, cache=cache,
-                            cache_read=not fresh)
-            with store._db() as db:
-                for res in run.results:
-                    outcome = store.record_machine(db, {
-                        "id": res.id, "status": res.status.value, "text": res.text,
-                        "raw_translation": res.raw_translation, "warnings": res.warnings, "problems": res.problems,
-                        "provider": res.provider, "model": res.model,
-                        "glossary_sig": glossary_signature(res.masked, glossary)}, author=f"motor {eng.id}")
-                    counts[outcome] += 1
-                    db.execute("INSERT OR REPLACE INTO job_segment VALUES (?,?,?)", (job_id, res.id, outcome))
-            t = run.tokens()
-            tokens_in += t["input"]
-            tokens_out += t["output"]
-            cost = tokens_in * price_in + tokens_out * price_out
-            done += len(sources)
-            update(done=done, tokens_in=tokens_in, tokens_out=tokens_out, cost=round(cost, 5),
-                   counts_json=json.dumps(counts), heartbeat_at=_now())
-            if cost > budget:
-                update(state="stopped_budget", finished_at=_now(),
-                       error=f"gasto real {cost:.4f} passou do teto {budget:.4f}; o que já foi traduzido está salvo")
-                return
-        problems = counts["needs_review"] + counts["failed"] + counts["retry_failed"]
-        update(state="done_with_warnings" if problems else "done", finished_at=_now())
+        running: set[Future] = set()
+        with ThreadPoolExecutor(max_workers=max(1, workers), thread_name_prefix=f"secao-{job_id}") as pool:
+            for label, group in groupby(items, key=lambda x: x[0]):
+                while len(running) >= max(1, workers):
+                    finished, running = wait(running, return_when=FIRST_COMPLETED)
+                    for f in finished:
+                        f.result()  # uma falha inesperada numa seção encerra a tarefa como "failed"
+                if stop or state() == "cancel_requested":
+                    break
+                sources = [x for _, x in group]
+                predicted = estimate([(label, sources)], glossary, eng, prices, style, None if fresh else cache).cost
+                with lock:
+                    if totals["cost"] + totals["reserved"] + predicted > budget:
+                        stop["reason"] = (f"o próximo trecho ({label or 'sem seção'}, previsto {predicted:.4f}) "
+                                          f"passaria do teto {budget:.4f} (gasto {totals['cost']:.4f}, em andamento "
+                                          f"{totals['reserved']:.4f}); nada dele foi enviado")
+                        break
+                    totals["reserved"] += predicted
+                running.add(pool.submit(section, label, sources, predicted))
+            for f in wait(running).done:
+                f.result()
+        if stop:
+            update(state="stopped_budget", finished_at=_now(), error=stop["reason"], counts_json=json.dumps(counts))
+        elif state() == "cancel_requested":
+            update(state="cancelled", finished_at=_now(), counts_json=json.dumps(counts))
+        else:
+            problems = counts["needs_review"] + counts["failed"] + counts["retry_failed"]
+            update(state="done_with_warnings" if problems else "done", finished_at=_now())
     except Exception as exc:  # noqa: BLE001 - a tarefa registra qualquer falha e não derruba o servidor
         update(state="failed", finished_at=_now(), error=f"{type(exc).__name__}: {exc}")
 

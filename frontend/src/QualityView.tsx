@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, Assembly, Quality } from "./api";
+import { api, Assembly, Audit, Quality } from "./api";
 
 const ISSUE: Record<string, string> = {
   not_written: "bloco não escrito",
@@ -75,6 +75,60 @@ function AssemblyPanel(props: { projectId: string; author: string; onDone: () =>
   );
 }
 
+const STATE_LABEL: Record<string, string> = {
+  translated: "traduzidos", reviewed: "revisados", not_needed: "só notação", pending: "pendentes",
+  needs_review: "recusados pela proteção", failed: "falharam", blocked: "bloqueados (tradução manual)", cached: "do cache",
+};
+
+function AuditPanel(props: { projectId: string }) {
+  const [a, setA] = useState<Audit | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  useEffect(() => { api.audit(props.projectId).then(setA); }, [props.projectId]);
+  const run = async () => {
+    setBusy(true);
+    setError("");
+    try {
+      setA(await api.runAudit(props.projectId));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const check = (ok: boolean, text: string) => <li className={ok ? "ok" : "bad"}>{ok ? "✓" : "✗"} {text}</li>;
+  return (
+    <div className="assembly">
+      <div className="row">
+        <button disabled={busy} onClick={run}>{busy ? "Conferindo o livro…" : "Auditar integridade"}</button>
+        {a && <strong className={a.complete ? "ok" : a.ok ? "" : "bad"}>
+          {a.complete ? "Livro completo e íntegro" : a.ok ? "Íntegro, ainda incompleto" : "Problemas de integridade"}
+        </strong>}
+        {a && <span className="muted small">conferido em {a.at.replace("T", " ")}</span>}
+      </div>
+      {a && (
+        <ul className="audit">
+          {check(a.original_ok, "original intacto (sha256)")}
+          {a.extraction && check(a.extraction.ok, `segmentos batem com a extração atual (${a.extraction.segments_project})`)}
+          {check(a.segments.notation_broken.length === 0,
+                 `notação idêntica à origem em todas as versões${a.segments.notation_broken.length
+                   ? `: ${a.segments.notation_broken.map((x) => x.id).join(", ")}` : ""}`)}
+          {check(a.segments.markers_left.length === 0, "nenhum marcador sobrando no texto")}
+          {check(a.segments.unfinished_count === 0, `${a.segments.unfinished_count} segmentos sem estado final · ` +
+                 Object.entries(a.segments.by_state).map(([k, v]) => `${v} ${STATE_LABEL[k] ?? k}`).join(", "))}
+          {a.assembly ? <>
+            {check(!a.assembly.outdated, "a montagem cobre o texto atual")}
+            {check(a.assembly.ok, `montagem: ${a.assembly.blocks_placed}/${a.assembly.blocks} blocos, ` +
+                   `${a.assembly.pages_ok}/${a.assembly.pages_assembled} páginas sem pendência, ` +
+                   `${a.assembly.missing_notation} com notação ausente, ${a.assembly.diagrams_changed} diagramas alterados`)}
+          </> : check(false, "PDF ainda não montado")}
+        </ul>
+      )}
+      {error && <p className="bad">{error}</p>}
+    </div>
+  );
+}
+
 export default function QualityView(props: { projectId: string; author: string; onOpenPage: (page: number) => void;
                                              onAssembled: () => void }) {
   const [q, setQ] = useState<Quality | null>(null);
@@ -87,8 +141,10 @@ export default function QualityView(props: { projectId: string; author: string; 
   }, [props.projectId]);
   useEffect(() => { load(); }, [load]);
 
-  const panel = <AssemblyPanel projectId={props.projectId} author={props.author}
-                               onDone={() => { load(); props.onAssembled(); }} />;
+  const panel = <>
+    <AssemblyPanel projectId={props.projectId} author={props.author} onDone={() => { load(); props.onAssembled(); }} />
+    <AuditPanel projectId={props.projectId} />
+  </>;
   if (error) return <section className="quality"><h2>Qualidade</h2>{panel}<p className="muted">{error}</p></section>;
   if (!q) return <section className="quality"><h2>Qualidade</h2>{panel}<p className="muted">Carregando…</p></section>;
   const shown = q.pages.filter((p) => !onlyProblems || !p.ok);

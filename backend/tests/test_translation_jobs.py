@@ -105,6 +105,7 @@ def test_job_stops_when_real_cost_passes_the_budget(client, monkeypatch):
             r = super().translate_batch(request)
             return BatchResult(r.translations, r.provider, r.model, Usage(100_000, 50_000, 0), r.raw_text)
     monkeypatch.setattr(api, "provider_for", lambda eng: Expensive())
+    monkeypatch.setenv("CHESSBOOK_TRANSLATION_WORKERS", "1")  # em paralelo, as seções já enviadas também terminam
     job = client.post("/api/projects/livro/jobs", json={"engine": "sonnet-5.5", "pages": "1-3", "budget": 0.01,
                                                         "author": "eu"}).json()
     done = _wait(client, job["id"])
@@ -272,3 +273,63 @@ def test_failed_retranslation_keeps_the_previous_translation(client, tmp_path, m
     assert done["state"] == "done_with_warnings" and done["counts"] == {"retry_failed": 1}
     seg = store.segment("p3-0")
     assert seg.current.text == before and seg.status == "translated" and not seg.needs_attention
+
+
+def test_sections_run_in_parallel_and_the_budget_counts_reservations(tmp_path, client):
+    """Três seções ao mesmo tempo; o teto vale para o conjunto (reserva do previsto antes de enviar)."""
+    import threading
+
+    from app.store.jobs import _run
+    from app.translation.engines import engine
+
+    pdf = tmp_path / "livro.pdf"
+    store = ProjectStore.create(tmp_path / "outro", "par", "Paralelo", pdf, pages=3)
+    store.add_book_segments([{"id": f"p{p}-0", "page": p, "section": f"Cap. {p}",
+                              "source": f"The rook on the seventh rank wins in chapter {p}."} for p in range(1, 4)])
+    live = {"now": 0, "max": 0}
+    guard = threading.Lock()
+    release = threading.Event()
+
+    class Slow(CountingProvider):
+        def translate_batch(self, request):
+            with guard:
+                live["now"] += 1
+                live["max"] = max(live["max"], live["now"])
+                if live["max"] >= 3:
+                    release.set()
+            release.wait(5)
+            try:
+                return super().translate_batch(request)
+            finally:
+                with guard:
+                    live["now"] -= 1
+
+    with store._db() as db:
+        db.execute("INSERT INTO job (engine, model, pages, state, budget, author, created_at)"
+                   " VALUES ('sonnet-5.5','m','1-3','queued',1.0,'t','t')")
+    items, _ = store.select_sources({1, 2, 3})
+    _run(store, 1, items, engine("sonnet-5.5"), _as_engine(Slow(), engine("sonnet-5.5")), PRICES, workers=3)
+    job = runner_job(store, 1)
+    assert live["max"] >= 3 and job.state == "done" and job.done == len(items)
+    assert job.cost == pytest.approx(len({s for s, _ in items}) * (1000 * 1e-6 + 500 * 4e-6))
+    # teto que cabe uma seção prevista, mas não duas ao mesmo tempo: a segunda não é enviada
+    store2 = store
+    with store2._db() as db:
+        db.execute("UPDATE segment SET current_version=NULL, status='pending'")
+        db.execute("INSERT INTO job (engine, model, pages, state, budget, author, created_at)"
+                   " VALUES ('sonnet-5.5','m','1-3','queued',?,'t','t')", (0.0,))
+    from app.translation.engines import estimate as est
+    one = est([("Cap. 1", [items[0][1]])], store2.glossary(), engine("sonnet-5.5"), PRICES, store2.style).cost
+    with store2._db() as db:
+        db.execute("UPDATE job SET budget=? WHERE id=2", (one * 1.5,))
+    release.set()
+    _run(store2, 2, store2.select_sources({1, 2, 3})[0], engine("sonnet-5.5"),
+         _as_engine(Slow(), engine("sonnet-5.5")), PRICES, fresh=True, workers=3)
+    job = runner_job(store2, 2)
+    assert job.state == "stopped_budget" and "nada dele foi enviado" in job.error and "em andamento" in job.error
+
+
+def runner_job(store, job_id):
+    from app.store.jobs import get_job
+
+    return get_job(store, job_id)

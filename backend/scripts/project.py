@@ -7,6 +7,7 @@ Uso (a partir de backend/):
     .venv/bin/python -m scripts.project assemble ID                  # PDF traduzido em <projeto>/output/
     .venv/bin/python -m scripts.project status ID
     .venv/bin/python -m scripts.project sync ID                      # depois de atualizar o código
+    .venv/bin/python -m scripts.project audit ID                     # integridade do livro inteiro
 
 Os projetos ficam em ``$CHESSBOOK_STORAGE`` (padrão: ``storage/`` na raiz do
 repositório, fora do controle de versão): contêm o livro e a tradução.
@@ -26,6 +27,7 @@ from app.extraction.ocr import scanned_pages
 from app.pipeline.notation_pass import collect
 from app.pipeline.segments import book_segments
 from app.store import assembly
+from app.store.audit import audit
 from app.store.project_store import ProjectStore
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -70,6 +72,8 @@ def main() -> None:
     s.add_argument("id")
     y = sub.add_parser("sync", help="alinha o projeto com a extração do código atual, sem perder traduções")
     y.add_argument("id")
+    u = sub.add_parser("audit", help="confere a integridade do livro inteiro (original, notação, montagem)")
+    u.add_argument("id")
     args = ap.parse_args()
     root = storage_root()
 
@@ -115,6 +119,12 @@ def main() -> None:
         segs = book_segments(notation, doc.metadata.get("title", "") or store.info["name"])
         print(json.dumps(store.sync_segments(segment_dicts(segs), os.environ.get("USER", "linha de comando")),
                          ensure_ascii=False))
+    elif args.cmd == "audit":
+        report = audit(store)
+        print(json.dumps({k: report[k] for k in ("ok", "complete", "original_ok")}, ensure_ascii=False))
+        print(json.dumps({"extração": report["extraction"], "segmentos": {k: v for k, v in report["segments"].items()
+                                                                         if k != "unfinished"},
+                          "montagem": report["assembly"]}, ensure_ascii=False, indent=1))
     elif args.cmd == "status":
         segs = store.segments()
         kinds = Counter(s.current.kind if s.current else s.status for s in segs)

@@ -115,3 +115,26 @@ def test_assembly_whose_process_died_is_reported_interrupted(project):
         db.execute("INSERT INTO assembly (state, pid, author, created_at) VALUES ('running', 999999, 'eu', 'x')")
     current = assembly.latest(store)
     assert current.state == "interrupted" and "reaproveita" in current.error
+
+
+def test_audit_confirms_a_complete_book_and_catches_broken_notation(project):
+    from app.store.audit import audit
+
+    store, notation = project
+    _assemble(store, notation)
+    report = audit(store)
+    assert report["ok"] and report["extraction"]["ok"] and report["assembly"]["ok"]
+    assert report["complete"] == (report["segments"]["unfinished_count"] == 0)
+    seg = next(s for s in store.segments() if s.current is not None and any(ch.isdigit() for ch in s.source))
+    prot = __import__("app.translation.guard", fromlist=["protect"]).protect(seg.source, store.style)
+    slot = max(prot.slots.values(), key=len)
+    with store._db() as db:  # corrompe uma tradução por fora (o que a proteção nunca deixaria acontecer)
+        db.execute("UPDATE translation SET text=? WHERE segment_id=? AND version=?",
+                   (seg.current.text.replace(slot, "", 1) + " ⟦9⟧", seg.id, seg.current.version))
+    broken = audit(store, check_extraction=False)
+    assert not broken["ok"] and broken["segments"]["notation_broken"][0]["id"] == seg.id
+    assert seg.id in broken["segments"]["markers_left"]
+    other = next(s for s in store.segments() if s.current is not None and s.id != seg.id)
+    store.edit(other.id, other.current.text + " ", "revisor")
+    assert audit(store, check_extraction=False)["assembly"]["outdated"]
+    assert (store.dir / "output" / "auditoria.json").exists()

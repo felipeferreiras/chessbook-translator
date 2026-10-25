@@ -99,16 +99,28 @@ def parse_output(raw: str, expected_ids: list[str]) -> dict[str, str]:
     fenced = re.match(r"^```(?:json)?\s*(.*?)\s*```$", text, re.DOTALL)
     if fenced:  # modelos sem modo JSON costumam cercar a resposta com ```json
         text = fenced.group(1)
-    try:
-        data = json.loads(text)
-    except json.JSONDecodeError as exc:
-        raise ProviderError(f"resposta não é JSON válido: {exc}") from exc
-    items = data.get("translations") if isinstance(data, dict) else None
-    if not isinstance(items, list):
+    # Alguns modelos devolvem o objeto e mais texto, ou dois objetos seguidos: lê todos em sequência.
+    # Cada tradução ainda passa pela proteção, então aceitar o que veio a mais não arrisca a notação.
+    decoder = json.JSONDecoder()
+    objects, pos = [], 0
+    while pos < len(text):
+        try:
+            data, end = decoder.raw_decode(text, pos)
+        except json.JSONDecodeError as exc:
+            if not objects:
+                raise ProviderError(f"resposta não é JSON válido: {exc}") from exc
+            break  # texto solto depois do JSON
+        objects.append(data)
+        pos = end
+        while pos < len(text) and text[pos].isspace():
+            pos += 1
+    items = [it for d in objects if isinstance(d, dict) and isinstance(d.get("translations"), list)
+             for it in d["translations"]]
+    if not items and not any(isinstance(d, dict) and isinstance(d.get("translations"), list) for d in objects):
         raise ProviderError("resposta sem a lista 'translations'")
     out: dict[str, str] = {}
     wanted = set(expected_ids)
     for item in items:
         if isinstance(item, dict) and item.get("id") in wanted and isinstance(item.get("text"), str):
-            out[item["id"]] = item["text"]
+            out.setdefault(item["id"], item["text"])  # repetido: vale a primeira
     return out

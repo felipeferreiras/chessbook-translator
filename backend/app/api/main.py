@@ -25,6 +25,7 @@ from pydantic import BaseModel, Field
 
 from app.pipeline.segments import parse_pages
 from app.store import assembly as assembler
+from app.store import audit as audit_store
 from app.store import jobs as job_runner
 from app.store.project_store import MODES, GuardViolation, ProjectStore, SegmentView, StoreError
 from app.translation.cache import TranslationCache
@@ -305,7 +306,7 @@ def _estimates(store: ProjectStore, items: list, engines: tuple[Engine, ...], fr
     cache = None if fresh else TranslationCache(store.dir / "cache.sqlite")
     out = []
     for eng in engines:
-        e = estimate(groups, glossary, eng, table, style, cache)
+        e = estimate(groups, glossary, eng, table, style, cache, workers=job_runner.default_workers())
         price_in, price_out = table.by_model.get(eng.model, eng.fallback_price)
         out.append({"engine": eng.id, "label": eng.label, "model": eng.model, "status": eng.status, "note": eng.note,
                     "price_in_per_million": round(price_in * 1e6, 4), "price_out_per_million": round(price_out * 1e6, 4),
@@ -417,6 +418,17 @@ def start_assembly(project_id: str, body: AuthorIn) -> dict:
 def cancel_assembly(project_id: str) -> dict | None:
     current = assembler.cancel(_store(project_id))
     return asdict(current) if current else None
+
+
+@app.get("/api/projects/{project_id}/audit")
+def last_audit(project_id: str) -> dict | None:
+    return audit_store.last(_store(project_id))
+
+
+@app.post("/api/projects/{project_id}/audit")
+def run_audit(project_id: str) -> dict:
+    """Confere a integridade do livro inteiro (original, extração, notação de cada versão, montagem)."""
+    return audit_store.audit(_store(project_id))
 
 
 @app.put("/api/projects/{project_id}/limits")

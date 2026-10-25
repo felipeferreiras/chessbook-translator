@@ -138,8 +138,8 @@ class Estimate:
 
 def estimate(groups: list[tuple[str, list[SourceSegment]]], glossary: Glossary, eng: Engine, prices: Prices,
              style: LexStyle = DEFAULT_STYLE, cache: TranslationCache | None = None,
-             max_chars: int = 6000, max_segments: int = 20) -> Estimate:
-    """Custo previsto para traduzir ``groups`` [(seção, segmentos)] com ``eng``."""
+             max_chars: int = 6000, max_segments: int = 20, workers: int = 1) -> Estimate:
+    """Custo previsto para traduzir ``groups`` [(seção, segmentos)] com ``eng`` (``workers`` seções ao mesmo tempo)."""
     total = sent = cached = calls = 0
     in_chars = out_chars = 0.0
     system = build_request([], glossary).system_prompt
@@ -170,7 +170,8 @@ def estimate(groups: list[tuple[str, list[SourceSegment]]], glossary: Glossary, 
         notes.append("experimental: falhas de resposta podem exigir nova tentativa (custo extra)")
     return Estimate(eng, total, sent, cached, calls, tokens_in, tokens_out, round(cost, 4),
                     round(cost * (1 - eng.uncertainty), 4), round(cost * (1 + eng.uncertainty), 4),
-                    round(calls * eng.seconds_per_call / 60, 1), prices.source, notes)
+                    round(calls * eng.seconds_per_call / 60 / max(1, min(workers, len(groups) or 1)), 1),
+                    prices.source, notes)
 
 
 def group_by_section(items: list[tuple[str, SourceSegment]]) -> list[tuple[str, list[SourceSegment]]]:

@@ -159,6 +159,20 @@ export interface Assembly {
   outdated: boolean;
 }
 
+export interface Audit {
+  at: string;
+  ok: boolean;
+  complete: boolean;
+  original_ok: boolean;
+  extraction?: { ok: boolean; segments_project: number; segments_extraction: number; missing_in_project: string[];
+                 only_in_project: string[]; source_differs: string[] };
+  segments: { total: number; by_state: Record<string, number>; unfinished: string[]; unfinished_count: number;
+              notation_broken: { id: string; problems: string[] }[]; markers_left: string[] };
+  assembly: null | { ok: boolean; outdated: boolean; pages_assembled: number; pages_in_pdf: number; pages_ok: number;
+                     blocks: number; blocks_placed: number; missing_notation: number; diagrams_changed: number;
+                     original_unchanged_during_assembly: boolean };
+}
+
 /** Erro da API com os motivos que o backend devolveu (ex.: notação alterada). */
 export class ApiError extends Error {
   constructor(message: string, public problems: string[] = []) {
@@ -221,6 +235,8 @@ export const api = {
     }),
   cancelJob: (id: string, job: number) => call<Job>(`${p(id)}/jobs/${job}/cancel`, { method: "POST" }),
   quality: (id: string) => call<Quality>(`${p(id)}/quality`),
+  audit: (id: string) => call<Audit | null>(`${p(id)}/audit`),
+  runAudit: (id: string) => call<Audit>(`${p(id)}/audit`, { method: "POST" }),
   assembly: (id: string) => call<Assembly | null>(`${p(id)}/assembly`),
   assemble: (id: string, author: string) =>
     call<Assembly>(`${p(id)}/assembly`, { method: "POST", body: JSON.stringify({ author }) }),

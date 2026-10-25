@@ -329,3 +329,22 @@ def test_pollinations_config_and_base_url():
 def test_moderation_model_is_flagged():
     assert model_warnings("qwen/qwen3guard-gen-8b")
     assert model_warnings("openai/gpt-5.5") == []
+
+
+@pytest.mark.parametrize("raw", [
+    '{"translations": [{"id": "p1", "text": "A"}]}\n{"translations": [{"id": "p2", "text": "B"}]}',
+    '{"translations": [{"id": "p1", "text": "A"}, {"id": "p2", "text": "B"}]}\nEspero ter ajudado.',
+])
+def test_json_followed_by_extra_data_is_read(raw):
+    from app.translation.provider import parse_output
+
+    assert parse_output(raw, ["p1", "p2"]) == {"p1": "A", "p2": "B"}
+
+
+def test_text_that_is_not_json_is_still_refused():
+    from app.translation.provider import parse_output
+
+    with pytest.raises(ProviderError):
+        parse_output("Safety: Safe", ["p1"])
+    with pytest.raises(ProviderError):
+        parse_output('{"other": 1}', ["p1"])
