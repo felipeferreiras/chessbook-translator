@@ -26,6 +26,7 @@ from app.pipeline.notation_pass import collect
 from app.pipeline.segments import parse_pages
 
 FIG_TO_LETTER = str.maketrans("♔♕♖♗♘♚♛♜♝♞", "KQRBNKQRBN")
+PROSE_WORD = re.compile(r"^[(“\"']?[A-Za-z][a-z’'\-]*[.,;:!?)”\"']*$")  # palavra comum, sem lances nem números
 TRUTH_MOVE = re.compile(r"^(\d{1,3}\.{0,3})?([KQRBN])([a-h]?[1-8]?x?[a-h][1-8])")
 
 
@@ -79,6 +80,10 @@ def main() -> None:
         sm = difflib.SequenceMatcher(a=expected, b=got, autojunk=False)
         totals["words_expected"] += len(expected)
         totals["words_matched"] += sum(m.size for m in sm.get_matching_blocks())
+        prose = [k for k, w in enumerate(expected) if PROSE_WORD.match(w)]
+        matched = {i for m in sm.get_matching_blocks() for i in range(m.a, m.a + m.size)}
+        totals["prose_words_expected"] += len(prose)
+        totals["prose_words_matched"] += sum(k in matched for k in prose)
         # lances com peça: o que o OCR leu na posição correspondente
         for tag, i1, i2, j1, j2 in sm.get_opcodes():
             for k in range(i1, i2):
@@ -118,6 +123,7 @@ def main() -> None:
               "seconds_per_page": round(seconds / len(pages), 2),
               **totals,
               "word_accuracy": round(totals["words_matched"] / max(1, totals["words_expected"]), 4),
+              "prose_word_accuracy": round(totals["prose_words_matched"] / max(1, totals["prose_words_expected"]), 4),
               "moves_correct_rate": round((totals["moves_ok_flagged"] + totals["moves_ok_unflagged"])
                                           / max(1, totals["moves_expected"]), 4),
               "moves_wrong_without_warning": totals["moves_wrong_unflagged"]}

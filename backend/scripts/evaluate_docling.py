@@ -28,7 +28,7 @@ import pymupdf
 
 from app.pipeline.notation_pass import collect
 from app.pipeline.segments import parse_pages
-from scripts.evaluate_ocr import TRUTH_MOVE, _words, rasterize
+from scripts.evaluate_ocr import PROSE_WORD, TRUTH_MOVE, _words, rasterize
 
 SKIP_LABELS = {"picture", "table", "chart"}
 
@@ -44,6 +44,9 @@ def converter(ocr: str):
         "easyocr": lambda: po.EasyOcrOptions(lang=["en"], force_full_page_ocr=True),
     }
     opts = po.PdfPipelineOptions(do_ocr=True, do_table_structure=False, ocr_options=engines[ocr]())
+    local = Path.home() / ".cache" / "docling" / "models"  # baixados com ``docling-tools models download``
+    if local.exists():
+        opts.artifacts_path = local
     return DocumentConverter(format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=opts)})
 
 
@@ -55,6 +58,8 @@ def main() -> None:
     ap.add_argument("--dpi", type=int, default=300)
     ap.add_argument("--noise", type=float, default=0.0)
     ap.add_argument("--out", type=Path)
+    ap.add_argument("--hybrid", action="store_true",
+                    help="layout e ordem de leitura do Docling com as palavras e figurinas do nosso OCR")
     args = ap.parse_args()
     src = pymupdf.open(args.pdf)
     pages = sorted(parse_pages(args.pages, src.page_count))
@@ -72,6 +77,7 @@ def main() -> None:
         doc = conv.convert(path).document
         seconds = time.time() - t
     texts: dict[int, list[str]] = {}
+    boxes: dict[int, list[pymupdf.Rect]] = {}  # blocos de texto do Docling, na ordem de leitura dele
     pictures: dict[int, list[pymupdf.Rect]] = {}
     labels: Counter[str] = Counter()
     for item, _level in doc.iterate_items():
@@ -86,6 +92,24 @@ def main() -> None:
             pictures.setdefault(prov.page_no, []).append(pymupdf.Rect(box.l, box.t, box.r, box.b))
         elif getattr(item, "text", ""):
             texts.setdefault(prov.page_no, []).append(item.text)
+            boxes.setdefault(prov.page_no, []).append(pymupdf.Rect(box.l, box.t, box.r, box.b))
+    if args.hybrid:
+        from app.extraction.ocr import ocr_document
+
+        t = time.time()
+        ours = ocr_document(scans, list(range(1, len(pages) + 1)))
+        seconds += time.time() - t
+        texts = {}
+        for index, res in ours.items():
+            words = [(sp["text"].strip(), pymupdf.Rect(sp["bbox"])) for b in res.blocks for ln in b["lines"]
+                     for sp in ln["spans"]]
+            buckets: list[list[str]] = [[] for _ in boxes.get(index, [])]
+            orphans = []
+            for text, rect in words:
+                center = (rect.tl + rect.br) / 2
+                k = next((i for i, b in enumerate(boxes.get(index, [])) if (b + (-2, -2, 2, 2)).contains(center)), None)
+                (buckets[k] if k is not None else orphans).append(text)
+            texts[index] = [" ".join(b) for b in buckets] + orphans
     totals: Counter[str] = Counter()
     for index, p in enumerate(pages, start=1):
         expected = _words(" ".join(r.resolved.text for r in truth.regions if r.page == p))
@@ -93,6 +117,10 @@ def main() -> None:
         sm = difflib.SequenceMatcher(a=expected, b=got, autojunk=False)
         totals["words_expected"] += len(expected)
         totals["words_matched"] += sum(m.size for m in sm.get_matching_blocks())
+        prose = [k for k, w in enumerate(expected) if PROSE_WORD.match(w)]
+        matched = {i for m in sm.get_matching_blocks() for i in range(m.a, m.a + m.size)}
+        totals["prose_words_expected"] += len(prose)
+        totals["prose_words_matched"] += sum(k in matched for k in prose)
         for tag, i1, i2, j1, j2 in sm.get_opcodes():
             for k in range(i1, i2):
                 truth_move = TRUTH_MOVE.match(expected[k])
@@ -107,9 +135,10 @@ def main() -> None:
         totals["boards_expected"] += len(boards)
         totals["boards_found"] += sum(any(f.contains((b.tl + b.br) / 2) for f in found) for b in boards)
         totals["pictures_not_boards"] += sum(not any(f.contains((b.tl + b.br) / 2) for b in boards) for f in found)
-    report = {"engine": f"docling + {args.ocr}", "pages": len(pages), "dpi": args.dpi, "noise": args.noise,
+    report = {"engine": "docling (layout) + nosso OCR" if args.hybrid else f"docling + {args.ocr}", "pages": len(pages), "dpi": args.dpi, "noise": args.noise,
               "seconds_per_page": round(seconds / len(pages), 2), **totals, "labels": dict(labels),
               "word_accuracy": round(totals["words_matched"] / max(1, totals["words_expected"]), 4),
+              "prose_word_accuracy": round(totals["prose_words_matched"] / max(1, totals["prose_words_expected"]), 4),
               "moves_correct_rate": round(totals["moves_ok"] / max(1, totals["moves_expected"]), 4)}
     print(json.dumps(report, ensure_ascii=False, indent=1))
     if args.out:

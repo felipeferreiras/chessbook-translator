@@ -1,4 +1,4 @@
-# ADR-0007: figurinas em imagem pelos protótipos do livro; Docling adiado
+# ADR-0007: figurinas em imagem pelos protótipos do livro; Docling avaliado e não adotado
 
 **Estado:** aceito · **Data:** 2026-10-24 · Complementa a ADR-0006.
 
@@ -20,9 +20,15 @@ editoras: o rei do Dvoretsky tem nota 0,3–0,5 contra elas.
   peça e o OCR é refeito. A letra volta a ser figurina pela posição.
 * **Conferência obrigatória.** Todo segmento vindo de OCR pede conferência com
   a imagem antes da aprovação. Os avisos específicos apenas apontam onde olhar.
-* **Docling adiado.** Os modelos dele vêm do Hugging Face, bloqueado no
-  ambiente atual. Ele pode entrar depois, como alternativa de layout,
-  atrás da mesma interface (`document_ocr`).
+* **Docling avaliado e não adotado (2026-10-25).**
+  * Nas mesmas páginas, o Docling com Tesseract empata ou perde na prosa
+    (94,7–96,6 % contra 96,4–98,1 %) e não lê lances com peça (cerca de 1 %
+    contra 71–84 %).
+  * O híbrido (layout do Docling com o nosso OCR) varia de −5,5 a +0,6 ponto
+    na prosa e custa o dobro do tempo.
+  * Ele traria 6 GB de dependências. Fica a avaliação
+    (`scripts/evaluate_docling.py`) para livros de layout mais complexo, onde
+    a ordem de leitura dele pode compensar.
 
 ## Consequências
 

@@ -201,22 +201,51 @@ obrigatória em todo parágrafo vindo do OCR, e não só nos que têm aviso.
 
 ## Docling
 
-O Docling 2.142.1 (MIT) foi instalado num ambiente separado, com 5,9 GB por
-causa do PyTorch, para não pesar no projeto. A avaliação está pronta em
-`scripts/evaluate_docling.py`, com as mesmas páginas e o mesmo gabarito do
-nosso OCR. Ela mede quatro coisas: palavras na ordem de leitura, lances com
-peça, diagramas detectados como imagem e tempo por página.
+Avaliado em 2026-10-25, depois da liberação de `huggingface.co` e `*.hf.co`.
 
-Os modelos ainda não baixam. `huggingface.co` foi liberado em 2026-10-24, mas
-os pesos são servidos por outros endereços, que continuam bloqueados:
+* Versão 2.142.1 (MIT), num ambiente separado: 5,9 GB por causa do PyTorch.
+* Modelo de layout `docling-layout-heron` (Apache-2.0, 436 MB com os do
+  EasyOCR).
+* O RapidOCR não pôde ser testado: os modelos dele vêm de `www.modelscope.cn`,
+  que continua bloqueado.
 
-* com o Xet: `cas-server.xethub.hf.co`, que leva a `cas-bridge.xethub.hf.co`
-  e `transfer.xethub.hf.co`;
-* sem o Xet (`HF_HUB_DISABLE_XET=1`): `us.aws.cdn.hf.co`, `cdn-lfs.huggingface.co`
-  e `cdn-lfs-us-1.hf.co`.
+`scripts/evaluate_docling.py` usa as mesmas páginas e o mesmo gabarito de
+`evaluate_ocr`. "Prosa" conta só palavras comuns, sem lances nem números, e
+mede o layout e a ordem de leitura sem a desvantagem das figurinas. O
+"híbrido" usa os blocos e a ordem de leitura do Docling com as palavras e
+figurinas do nosso OCR.
 
-Liberar `*.hf.co` (que inclui `*.xethub.hf.co`) e `cdn-lfs.huggingface.co`
-resolve. O OCR atual não depende do Docling.
+| Conjunto | Motor | Prosa | Todas as palavras | Lances com peça | Diagramas | s/página |
+|---|---|---|---|---|---|---|
+| 18 de ajuste | **nosso OCR** | **98,1 %** | **91,0 %** | **84,0 %** | 53/53 | 6,9 |
+| | Docling + Tesseract | 94,7 % | 75,2 % | 0,9 % | 53/53 | 5,9 |
+| | Docling + EasyOCR | 74,0 % | 51,9 % | 0 % | 53/53 | 65,0 |
+| | híbrido | 92,6 % | 86,6 % | 83,1 % | — | 12,4 |
+| 20 novas | **nosso OCR** | 96,4 % | 85,9 % | 70,7 % | 58/58 | 6,6 |
+| | Docling + Tesseract | 96,6 % | 76,2 % | 1,2 % | 58/58 (+1 imagem que não é diagrama) | 5,7 |
+| | híbrido | 97,0 % | 86,6 % | 73,8 % | — | 12,0 |
+| 20 novas com ruído | **nosso OCR** | 96,6 % | 86,1 % | 71,2 % | 58/58 | 8,4 |
+| | Docling + Tesseract | 96,5 % | 76,0 % | 1,0 % | 58/58 (+1) | 6,5 |
+
+(O tempo do nosso OCR subiu de ~5 para ~7 s por página em relação à medida
+anterior porque desta vez as execuções disputaram a CPU.)
+
+O que os números dizem:
+
+* **Diagramas:** o Docling acha todos como imagem (`picture`), como o nosso
+  detector pela moldura. Não há ganho.
+* **Prosa:** empata nas páginas novas e perde nas de ajuste.
+* **Lances com peça:** sem tratar as figurinas, o Docling praticamente zera
+  (o Tesseract dentro dele lê `@e6`, `Se6`).
+* **EasyOCR:** pior e dez vezes mais lento na CPU.
+* **Híbrido:** ganha um pouco nas páginas novas (+0,6 ponto na prosa, +3,1 nos
+  lances) e perde nas de ajuste (−5,5 na prosa). Palavras que caem fora dos
+  blocos do Docling vão para o fim, fora de ordem. Custa o dobro do tempo.
+
+**Decisão:** o Docling não entra no projeto agora (ver ADR-0007). Ele custa
+6 GB de dependências e o dobro do tempo, sem ganho claro neste livro. A
+avaliação fica pronta para repetir num livro de layout mais complexo, como
+tabelas ou três colunas.
 
 ## Limitações conhecidas
 
