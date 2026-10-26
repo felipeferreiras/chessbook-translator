@@ -11,7 +11,7 @@ uv venv .venv && uv pip install --python .venv/bin/python -e ".[dev,spike]"
 Requisitos do sistema: fonte DejaVu Sans (`fonts-dejavu-core`); Tesseract é
 opcional (o teste de OCR é pulado se não estiver instalado).
 
-## Suíte atual — 285 testes, todos passando em 2026-10-24
+## Suíte atual — 308 testes, todos passando em 2026-10-26
 
 | Arquivo | Cobre |
 |---|---|
@@ -32,6 +32,9 @@ opcional (o teste de OCR é pulado se não estiver instalado).
 | `test_compare_models.py` | métricas da comparação de modelos: estados dos segmentos, avisos de glossário e custo pelo catálogo |
 | `test_translation_jobs.py` | todos os motores com previsão, páginas inválidas recusadas, tarefa traduz pendentes e registra custo, parada antes de uma seção que passaria do teto e depois de passar dele, motor não configurado, previsão igual aos lotes enviados, preços sem rede, tarefa órfã interrompida e retomada sem repetir, tarefa viva não tomada por órfã, sinal de vida recente exigido de outro processo, teto do projeto limitando cada tarefa, modos de retradução (versão humana nunca entra, cache × tradução nova), glossário alterado marca só quem usa o termo, nova tentativa que falha mantém a tradução anterior |
 | `test_assembly.py` | auditoria (livro completo confirmado, notação quebrada e marcador sobrando apanhados, edição depois da montagem detectada pela impressão digital do conteúdo), partes reaproveitadas e só a página editada remontada, montagem interrompida retomada pelas partes prontas, código novo invalida as partes, montagem pela API (andamento, recusa da segunda, qualidade, imagem, "edições depois desta montagem"), processo morto dado como interrompido |
+| `test_security.py` | só nomes locais servidos (DNS rebinding), nome extra configurável, alterações de outro site recusadas (Origin, Origin null, Sec-Fetch-Site) e as da própria interface aceitas, cabeçalhos de segurança |
+| `test_backup.py` | backup e restauração trazem tudo de volta (versões, edição humana, registro), cópia com outro id, nunca sobrescreve, arquivo adulterado recusado sem deixar nada pela metade, entradas com `..`, absolutas ou inesperadas recusadas, manifesto ausente ou divergente, id inválido |
+| `test_project_lifecycle.py` | envio do PDF cria o projeto em outro processo (nome enviado nunca vira caminho, envio temporário apagado, id repetido recusado), arquivo que não é PDF ou PDF quebrado recusados, limite de tamanho (413), configuração sem expor a chave, backup baixado e restaurado pela API, sincronização |
 | `test_ocr.py` | hOCR com caixas e confiança, linhas partidas no vão entre colunas, padrões impossíveis marcados, página digitalizada reconhecida, tabuleiro pela moldura (e nenhum inventado sem ele), letra classificada como letra, OCR da página sintética sem lance errado sem aviso, livro digitalizado de ponta a ponta (extração com OCR guardado e relido, aviso obrigatório até a aprovação, montagem sem sobra do original e diagrama intacto), livro digital com uma página só de imagem não passa pelo OCR |
 | `test_pdf_fixtures.py` | extração de FAN Unicode, fonte figurina por letras, fonte de uso privado; proposta de mapa de glifos; letras comuns não confundidas; validação após mapeamento; caracterização do `insert_htmlbox`; referências do probe (todas as fontes com figurinas, margem contra outra peça); caracterização do Tesseract com FAN |
 
