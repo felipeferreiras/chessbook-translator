@@ -32,12 +32,13 @@ from app.store import assembly
 from app.store.audit import audit
 from app.store.backup import create_backup, restore_backup
 from app.store.project_store import ProjectStore
+from app.translation.config import load_env_file
 
 ROOT = Path(__file__).resolve().parents[2]
 
 
 def storage_root() -> Path:
-    return Path(os.environ.get("CHESSBOOK_STORAGE", ROOT / "storage"))
+    return Path(os.environ.get("CHESSBOOK_STORAGE") or ROOT / "storage")
 
 
 def style_masks(pdf: Path, pages: set[int], ocr_cache: Path | None = None):
@@ -86,6 +87,7 @@ def main() -> None:
     r.add_argument("zip", type=Path)
     r.add_argument("--como", help="id do projeto restaurado (padrão: o original)")
     args = ap.parse_args()
+    load_env_file(ROOT / ".env")  # CHESSBOOK_STORAGE e as demais configurações, como na interface
     root = storage_root()
 
     if args.cmd == "create":

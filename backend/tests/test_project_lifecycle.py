@@ -39,7 +39,8 @@ def test_upload_creates_the_project_in_the_background(client, tmp_path):
     assert project["original_ok"] and project["segments"] > 0
     assert not list((tmp_path / "storage" / ".envios").glob("*"))  # o envio temporário foi apagado
     # o nome enviado ("../../meu livro.pdf") nunca vira caminho
-    assert [p.name for p in (tmp_path / "storage" / "livro-de-teste" / "original").iterdir()][0].endswith(".pdf")
+    stored = [p.name for p in (tmp_path / "storage" / "livro-de-teste" / "original").iterdir()]
+    assert len(stored) == 1 and stored[0].endswith(".pdf") and ".." not in stored[0]
     assert client.post("/api/projects", data={"name": "Livro de Teste"},
                        files={"file": ("x.pdf", pdf, "application/pdf")}).status_code == 400  # já existe
 

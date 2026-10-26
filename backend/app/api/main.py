@@ -59,7 +59,7 @@ def prices() -> Prices:
 
 
 def storage_root() -> Path:
-    return Path(os.environ.get("CHESSBOOK_STORAGE", ROOT / "storage"))
+    return Path(os.environ.get("CHESSBOOK_STORAGE") or ROOT / "storage")
 
 
 def _store(project_id: str) -> ProjectStore:
