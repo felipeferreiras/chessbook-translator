@@ -8,6 +8,8 @@ Uso (a partir de backend/):
     .venv/bin/python -m scripts.project status ID
     .venv/bin/python -m scripts.project sync ID                      # depois de atualizar o código
     .venv/bin/python -m scripts.project audit ID                     # integridade do livro inteiro
+    .venv/bin/python -m scripts.project backup ID [--dest PASTA]     # .zip com manifesto e sha256
+    .venv/bin/python -m scripts.project restore ARQUIVO.zip [--como NOVO_ID]
 
 Os projetos ficam em ``$CHESSBOOK_STORAGE`` (padrão: ``storage/`` na raiz do
 repositório, fora do controle de versão): contêm o livro e a tradução.
@@ -28,6 +30,7 @@ from app.pipeline.notation_pass import collect
 from app.pipeline.segments import book_segments
 from app.store import assembly
 from app.store.audit import audit
+from app.store.backup import create_backup, restore_backup
 from app.store.project_store import ProjectStore
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -60,6 +63,7 @@ def main() -> None:
     c.add_argument("pdf", type=Path)
     c.add_argument("--ocr", choices=("auto", "on", "off"), default="auto",
                    help="páginas só de imagem: auto = OCR se a maioria do livro for digitalizada")
+    c.add_argument("--progress", type=Path, help="andamento em JSON (usado pela interface)")
     i = sub.add_parser("import")
     i.add_argument("id")
     i.add_argument("translation", type=Path)
@@ -74,6 +78,13 @@ def main() -> None:
     y.add_argument("id")
     u = sub.add_parser("audit", help="confere a integridade do livro inteiro (original, notação, montagem)")
     u.add_argument("id")
+    k = sub.add_parser("backup", help="pacote .zip do projeto, com manifesto e sha256")
+    k.add_argument("id")
+    k.add_argument("--dest", type=Path, help="pasta de destino (padrão: <armazenamento>/backups)")
+    k.add_argument("--sem-saida", action="store_true", help="sem o PDF traduzido e os relatórios")
+    r = sub.add_parser("restore", help="restaura um backup (nunca sobrescreve)")
+    r.add_argument("zip", type=Path)
+    r.add_argument("--como", help="id do projeto restaurado (padrão: o original)")
     args = ap.parse_args()
     root = storage_root()
 
@@ -81,8 +92,16 @@ def main() -> None:
         doc = pymupdf.open(args.pdf)
         # páginas digitalizadas: o OCR fica guardado no projeto, e a montagem relê exatamente o mesmo texto
         ocr_tmp = root / f".{args.id}-ocr.json"
-        notation = collect(doc, ocr_cache=ocr_tmp, ocr_mode=args.ocr,
-                           progress=lambda stage, i, n: print(f"\r{stage}: {i}/{n} páginas", end="", flush=True))
+        def progress(stage: str, i: int = 0, n: int = 0) -> None:
+            print(f"\r{stage}: {i}/{n} páginas", end="", flush=True)
+            if args.progress:
+                tmp = args.progress.with_name(args.progress.name + ".tmp")
+                tmp.write_text(json.dumps({"stage": stage, "done": i, "total": n}), encoding="utf-8")
+                os.replace(tmp, args.progress)
+
+        progress("extração", 0, doc.page_count)
+        notation = collect(doc, ocr_cache=ocr_tmp, ocr_mode=args.ocr, progress=progress)
+        progress("gravando o projeto", doc.page_count, doc.page_count)
         images = scanned_pages(doc)
         if images and not ocr_tmp.exists():
             print(f"páginas só de imagem não lidas por OCR (capa, fotos?): {images[:20]} — use --ocr on para ler")
@@ -94,7 +113,15 @@ def main() -> None:
         store.add_book_segments(segment_dicts(segs))
         print(f"projeto criado em {store.dir} (sha256 {store.info['sha256'][:12]}…): {len(segs)} segmentos")
         return
+    if args.cmd == "restore":
+        restored = restore_backup(args.zip, root, args.como)
+        print(f"projeto {restored.id} restaurado em {restored.dir} (original e banco conferidos)")
+        return
     store = ProjectStore(root, args.id)
+    if args.cmd == "backup":  # mesmo com o original alterado: o backup é para salvar o que existe
+        path = create_backup(store, args.dest or root / "backups", include_output=not args.sem_saida)
+        print(f"backup em {path} ({path.stat().st_size / 1e6:.1f} MB)")
+        return
     if not store.verify_original():
         raise SystemExit("o original do projeto não confere com o sha256 registrado")
     if args.cmd == "import":

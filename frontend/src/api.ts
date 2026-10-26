@@ -173,6 +173,29 @@ export interface Audit {
                      original_unchanged_during_assembly: boolean };
 }
 
+export interface Settings {
+  storage: string;
+  privacy_mode: string;
+  remote_allowed: boolean;
+  pollinations_key: boolean;
+  workers: number;
+  tesseract: boolean;
+  max_upload_mb: number;
+  max_pages: number;
+}
+
+export interface Creation {
+  id: string;
+  name: string;
+  pages: number;
+  ocr: string;
+  state: "running" | "done" | "failed" | "interrupted";
+  started_at: string;
+  finished_at: string | null;
+  error: string | null;
+  progress?: { stage: string; done: number; total: number };
+}
+
 /** Erro da API com os motivos que o backend devolveu (ex.: notação alterada). */
 export class ApiError extends Error {
   constructor(message: string, public problems: string[] = []) {
@@ -181,9 +204,10 @@ export class ApiError extends Error {
 }
 
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
+  const form = init?.body instanceof FormData;  // envio de arquivo: o navegador define o Content-Type
   const res = await fetch(`/api${path}`, {
     ...init,
-    headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
+    headers: form ? (init?.headers ?? {}) : { "Content-Type": "application/json", ...(init?.headers ?? {}) },
   });
   if (!res.ok) {
     let detail: unknown = res.statusText;
@@ -204,6 +228,26 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
 const p = (id: string) => `/projects/${encodeURIComponent(id)}`;
 
 export const api = {
+  settings: () => call<Settings>("/settings"),
+  createProject: (file: File, name: string, projectId: string, ocr: string) => {
+    const body = new FormData();
+    body.append("file", file);
+    body.append("name", name);
+    body.append("project_id", projectId);
+    body.append("ocr", ocr);
+    return call<Creation>("/projects", { method: "POST", body });
+  },
+  creations: () => call<Creation[]>("/creations"),
+  restoreBackup: (file: File, projectId: string) => {
+    const body = new FormData();
+    body.append("file", file);
+    body.append("project_id", projectId);
+    return call<{ id: string; name: string }>("/backups/restore", { method: "POST", body });
+  },
+  sync: (id: string, author: string) =>
+    call<Record<string, number>>(`${p(id)}/sync`, { method: "POST", body: JSON.stringify({ author }) }),
+  backupUrl: (id: string) => `/api${p(id)}/backup`,
+  downloadUrl: (id: string) => `/api${p(id)}/download`,
   projects: () => call<{ id: string; name: string; pages: number }[]>("/projects"),
   project: (id: string) => call<Project>(p(id)),
   segments: (id: string, page: number) => call<Segment[]>(`${p(id)}/pages/${page}/segments`),

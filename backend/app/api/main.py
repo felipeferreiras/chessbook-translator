@@ -18,7 +18,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pymupdf
-from fastapi import FastAPI, HTTPException, Response
+from fastapi import FastAPI, File, Form, HTTPException, Response, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -27,7 +27,9 @@ from app.api.security import LocalOnlyMiddleware
 from app.pipeline.segments import parse_pages
 from app.store import assembly as assembler
 from app.store import audit as audit_store
+from app.store import creation
 from app.store import jobs as job_runner
+from app.store.backup import create_backup, restore_backup
 from app.store.project_store import MODES, GuardViolation, ProjectStore, SegmentView, StoreError
 from app.translation.cache import TranslationCache
 from app.translation.config import load_env_file, provider_from_env
@@ -81,6 +83,10 @@ def _view(s: SegmentView) -> dict:
     return out
 
 
+class AuthorIn(BaseModel):
+    author: str = Field(min_length=1, max_length=80)
+
+
 class EditIn(BaseModel):
     text: str = Field(min_length=1, max_length=20_000)
     author: str = Field(min_length=1, max_length=80)
@@ -117,6 +123,121 @@ def list_projects() -> list[dict]:
             info = ProjectStore(root, d.name).info
             out.append({"id": info["id"], "name": info["name"], "pages": info["pages"]})
     return out
+
+
+async def _receive(upload: UploadFile, suffix: str, limit: int) -> Path:
+    """Grava o arquivo enviado em ``<armazenamento>/.envios``, com nome próprio e limite de tamanho."""
+    import uuid
+
+    folder = storage_root() / ".envios"
+    folder.mkdir(parents=True, exist_ok=True)
+    stem = creation.slug(Path(upload.filename or "arquivo").stem)[:40]
+    path = folder / f"{uuid.uuid4().hex[:8]}-{stem}{suffix}"
+    size = 0
+    with path.open("wb") as out:
+        while chunk := await upload.read(1 << 20):
+            size += len(chunk)
+            if size > limit:
+                out.close()
+                path.unlink(missing_ok=True)
+                raise HTTPException(413, f"arquivo grande demais (máximo {limit // 1024 // 1024} MB)")
+            out.write(chunk)
+    return path
+
+
+@app.get("/api/settings")
+def settings() -> dict:
+    """Como o aplicativo está configurado (a chave nunca sai do servidor: só se ela existe)."""
+    import shutil
+
+    env = os.environ
+    return {
+        "storage": str(storage_root()),
+        "privacy_mode": env.get("CHESSBOOK_PRIVACY_MODE", "local_only"),
+        "remote_allowed": env.get("CHESSBOOK_PRIVACY_MODE") == "remote_allowed",
+        "pollinations_key": bool(env.get("POLLINATIONS_API_KEY")),
+        "workers": job_runner.default_workers(),
+        "tesseract": shutil.which("tesseract") is not None,
+        "max_upload_mb": creation.MAX_BYTES // 1024 // 1024,
+        "max_pages": creation.MAX_PAGES,
+    }
+
+
+@app.post("/api/projects")
+async def create_project(file: UploadFile = File(...), name: str = Form(..., min_length=1, max_length=200),  # noqa: B008
+                         project_id: str = Form("", max_length=64), ocr: str = Form("auto")) -> dict:
+    """Novo projeto a partir do PDF enviado; a extração (e o OCR, se houver) roda em outro processo."""
+    pid = project_id.strip() or creation.slug(name)
+    path = await _receive(file, ".pdf", creation.MAX_BYTES)
+    try:
+        return creation.start(storage_root(), pid, name.strip(), path, ocr)
+    except StoreError as exc:
+        path.unlink(missing_ok=True)
+        raise HTTPException(400, str(exc)) from exc
+
+
+@app.get("/api/creations")
+def creations() -> list[dict]:
+    return creation.all_status(storage_root())
+
+
+@app.get("/api/creations/{project_id}")
+def creation_status(project_id: str) -> dict:
+    if not _ID.match(project_id):
+        raise HTTPException(400, "id de projeto inválido")
+    try:
+        return creation.status(storage_root(), project_id)
+    except StoreError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+
+@app.post("/api/backups/restore")
+async def restore(file: UploadFile = File(...), project_id: str = Form("", max_length=64)) -> dict:  # noqa: B008
+    """Restaura um backup enviado; nunca sobrescreve um projeto existente."""
+    path = await _receive(file, ".zip", 16 * 1024**3)
+    try:
+        store = restore_backup(path, storage_root(), project_id.strip() or None)
+    except StoreError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    finally:
+        path.unlink(missing_ok=True)
+    return {"id": store.id, "name": store.info["name"]}
+
+
+@app.get("/api/projects/{project_id}/backup")
+def backup(project_id: str) -> FileResponse:
+    store = _store(project_id)
+    path = create_backup(store, storage_root() / "backups")
+    return FileResponse(path, media_type="application/zip", filename=path.name)
+
+
+@app.get("/api/projects/{project_id}/download")
+def download(project_id: str) -> FileResponse:
+    """O PDF traduzido montado."""
+    store = _store(project_id)
+    path = store.dir / "output" / "traduzido.pdf"
+    if not path.exists():
+        raise HTTPException(404, "PDF traduzido ainda não montado")
+    return FileResponse(path, media_type="application/pdf", filename=f"{creation.slug(store.info['name'])}-pt.pdf")
+
+
+@app.post("/api/projects/{project_id}/sync")
+def sync(project_id: str, body: AuthorIn) -> dict:
+    """Alinha o projeto com a extração do código atual, sem perder traduções."""
+    import pymupdf as _pm
+
+    from app.pipeline.notation_pass import collect
+    from app.pipeline.segments import book_segments
+
+    store = _store(project_id)
+    ocr_cache = store.dir / "ocr.json"
+    doc = _pm.open(store.original_path)
+    segs = book_segments(collect(doc, ocr_cache=ocr_cache, ocr_mode="on" if ocr_cache.exists() else "off"),
+                         doc.metadata.get("title", "") or store.info["name"])
+    return store.sync_segments([{"id": b.id, "page": b.page, "section": b.section.label,
+                                 "source": b.region.resolved.text, "kind": b.kind, "bold": b.region.main_mask,
+                                 "italic": b.region.italic_mask, "blocked": b.blocked, "flags": b.flags}
+                                for b in segs], body.author)
 
 
 @app.get("/api/projects/{project_id}")
@@ -394,10 +515,6 @@ def resume_job(project_id: str, job_id: int, body: ResumeIn) -> dict:
     except (StoreError, KeyError) as exc:
         raise HTTPException(409, str(exc)) from exc
     return asdict(job)
-
-
-class AuthorIn(BaseModel):
-    author: str = Field(min_length=1, max_length=80)
 
 
 @app.get("/api/projects/{project_id}/assembly")

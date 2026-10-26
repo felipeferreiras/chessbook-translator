@@ -143,3 +143,18 @@ button.primary { background: var(--accent); color: var(--panel); border-color: v
 .source-flags { margin: 8px 0 0; font-size: 13px; color: var(--bad); }
 .source-flags ul { margin: 4px 0 0; padding-left: 18px; color: var(--muted); }
 .audit { list-style: none; padding: 0; margin: 8px 0 0; font-size: 13px; display: grid; gap: 3px; }
+.project-view { padding: 16px; display: grid; gap: 14px; max-width: 900px; }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; }
+.panel h3 { margin: 0 0 8px; font-size: 15px; }
+.stack { display: grid; gap: 8px; }
+.stack label { display: grid; gap: 3px; font-size: 14px; }
+a.button { display: inline-block; text-decoration: none; color: inherit; border: 1px solid var(--line);
+  background: var(--panel); border-radius: 6px; padding: 4px 10px; }
+a.button.primary { background: var(--accent); color: var(--panel); border-color: var(--accent); }
+button.next { width: 100%; margin-bottom: 8px; font-size: 13px; }
+nav { flex-wrap: wrap; }
+.app > header select { max-width: 100%; }
+.audit li, .project-view p { overflow-wrap: anywhere; }
+input, select, textarea { max-width: 100%; min-width: 0; }
+.row label { flex-wrap: wrap; max-width: 100%; }
+.translate .row select { width: 100%; }

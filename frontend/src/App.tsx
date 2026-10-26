@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, ApiError, GlossaryEntry, Project, Segment, Selection, Version } from "./api";
+import { api, ApiError, GlossaryEntry, Project, Segment, Selection, Settings, Version } from "./api";
+import ProjectView from "./ProjectView";
 import QualityView from "./QualityView";
 import TranslateView from "./TranslateView";
 
@@ -34,18 +35,24 @@ export default function App() {
   const [projectId, setProjectId] = useState(() => loadPref("project", ""));
   const [project, setProject] = useState<Project | null>(null);
   const [page, setPage] = useState<number | null>(null);
-  const [tab, setTab] = useState<"pages" | "translate" | "quality" | "glossary">("pages");
+  const [tab, setTab] = useState<"project" | "pages" | "translate" | "quality" | "glossary">("pages");
+  const [settings, setSettings] = useState<Settings | null>(null);
   const [author, setAuthor] = useState(() => loadPref("author", ""));
   const [onlyAttention, setOnlyAttention] = useState(false);
   const [retranslate, setRetranslate] = useState<Selection | null>(null);
   const [error, setError] = useState("");
 
-  useEffect(() => {
+  const loadProjects = useCallback((open?: string) => {
     api.projects().then((list) => {
       setProjects(list);
-      if (!list.some((p) => p.id === projectId) && list.length) setProjectId(list[0].id);
+      if (open) setProjectId(open);
+      else if (!list.some((p) => p.id === projectId)) {
+        if (list.length) setProjectId(list[0].id);
+        else setTab("project");  // primeiro uso: começa criando um projeto
+      }
     }, (e) => setError(String(e)));
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { loadProjects(); api.settings().then(setSettings); }, [loadProjects]);
 
   // Resposta atrasada de um projeto anterior não pode sobrescrever a do projeto escolhido agora.
   const current = useRef(projectId);
@@ -69,6 +76,8 @@ export default function App() {
   useEffect(() => savePref("author", author), [author]);
 
   const attentionPages = new Set((project?.attention ?? []).map((id) => Number(id.slice(1).split("-")[0])));
+  const nextAttention = [...attentionPages].sort((a, b) => a - b).find((pg) => pg > (page ?? 0))
+    ?? [...attentionPages].sort((a, b) => a - b)[0];
   const pages = (project?.pages_with_segments ?? []).filter((p) => !onlyAttention || attentionPages.has(p.page));
 
   return (
@@ -91,6 +100,7 @@ export default function App() {
           <input value={author} onChange={(e) => setAuthor(e.target.value)} placeholder="seu nome" />
         </label>
         <nav>
+          <button className={tab === "project" ? "on" : ""} onClick={() => setTab("project")}>Projeto</button>
           <button className={tab === "pages" ? "on" : ""} onClick={() => setTab("pages")}>Páginas</button>
           <button className={tab === "translate" ? "on" : ""}
                   onClick={() => { setRetranslate(null); setTab("translate"); }}>Traduzir</button>
@@ -99,6 +109,10 @@ export default function App() {
         </nav>
       </header>
       {error && <p className="error" role="alert">{error}</p>}
+      {tab === "project" && (
+        <ProjectView project={project} author={author} settings={settings} onChange={refreshProject}
+                     onOpen={(id) => { loadProjects(id); setTab("pages"); }} />
+      )}
       {project && tab === "pages" && (
         <div className="layout">
           <aside>
@@ -106,6 +120,12 @@ export default function App() {
               <input type="checkbox" checked={onlyAttention} onChange={(e) => setOnlyAttention(e.target.checked)} />
               só o que pede atenção
             </label>
+            {nextAttention !== undefined && (
+              <button className="next" onClick={() => setPage(nextAttention)}
+                      title="Vai para a próxima página com algo para revisar">
+                Próxima pendência: p. {nextAttention}
+              </button>
+            )}
             <ul className="pages">
               {pages.map((p) => (
                 <li key={p.page}>
