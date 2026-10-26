@@ -23,6 +23,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from app.api.security import LocalOnlyMiddleware
 from app.pipeline.segments import parse_pages
 from app.store import assembly as assembler
 from app.store import audit as audit_store
@@ -41,6 +42,7 @@ _ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 _SEGMENT = re.compile(r"^p\d{1,5}-\d{1,7}$")
 
 app = FastAPI(title="chessbook-translator", docs_url="/api/docs", openapi_url="/api/openapi.json")
+app.add_middleware(LocalOnlyMiddleware)  # DNS rebinding e CSRF (ver app/api/security.py)
 load_env_file(ROOT / ".env")  # chave da Pollinations e CHESSBOOK_PRIVACY_MODE, sem sobrescrever o ambiente
 
 
