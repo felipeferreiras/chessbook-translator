@@ -168,10 +168,25 @@ function PageView(props: { project: Project; page: number; author: string; onlyA
   const { project, page } = props;
   const [segments, setSegments] = useState<Segment[]>([]);
   const [showImages, setShowImages] = useState(() => loadPref("images", "1") === "1");
+  const [pageMessage, setPageMessage] = useState("");
 
   useEffect(() => {
     api.segments(project.id, page).then(setSegments);
   }, [project.id, page]);
+
+  const approvePage = async () => {
+    try {
+      const r = await api.approvePage(project.id, page, props.author);
+      setSegments(await api.segments(project.id, page));
+      props.onChange();
+      setPageMessage(`${r.approved.length} aprovados` + (r.skipped.length
+        ? `; ${r.skipped.length} ficaram de fora (recusados pela proteção, com falha ou sem tradução)` : "."));
+    } catch (e) {
+      setPageMessage(String(e));
+    }
+  };
+  const pending = segments.some((s) => !s.approved && (s.current || s.kept_as_image)
+                                        && s.status !== "needs_review" && s.status !== "failed");
 
   const replace = (s: Segment) => {
     setSegments((list) => list.map((x) => (x.id === s.id ? s : x)));
@@ -188,6 +203,11 @@ function PageView(props: { project: Project; page: number; author: string; onlyA
                  onChange={(e) => { setShowImages(e.target.checked); savePref("images", e.target.checked ? "1" : "0"); }} />
           mostrar páginas
         </label>
+        <button disabled={!pending || !props.author.trim()} onClick={approvePage}
+                title="Aprova todos os parágrafos traduzidos desta página depois de conferi-los com a página original">
+          Aprovar página
+        </button>
+        {pageMessage && <span className="muted" role="status">{pageMessage}</span>}
       </div>
       {showImages && (
         <div className="images">
@@ -292,10 +312,11 @@ function SegmentCard(props: { projectId: string; segment: Segment; author: strin
                 onClick={() => run(() => api.edit(projectId, s.id, text, props.author), "Salvo como nova versão.")}>
           Salvar
         </button>
-        <button disabled={!s.current || dirty || busy || needAuthor}
+        <button disabled={!(s.current || s.kept_as_image) || dirty || busy || needAuthor}
                 onClick={() => run(() => api.approve(projectId, s.id, !s.approved, props.author),
-                                   s.approved ? "Aprovação retirada." : "Aprovado.")}>
-          {s.approved ? "Retirar aprovação" : "Aprovar"}
+                                   s.approved ? "Aprovação retirada." : "Aprovado.")}
+                title={s.kept_as_image ? "O bloco fica como na imagem original (não é traduzido)" : undefined}>
+          {s.approved ? "Retirar aprovação" : s.kept_as_image ? "Manter como na imagem" : "Aprovar"}
         </button>
         {dirty && <button onClick={() => setText(s.current?.text ?? "")}>Descartar</button>}
         <button onClick={async () => setHistory(history ? null : await api.history(projectId, s.id))}>

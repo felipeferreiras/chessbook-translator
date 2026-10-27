@@ -83,5 +83,14 @@ def test_backup_download_and_restore_through_the_api(client, tmp_path):
     assert ok.status_code == 200 and ok.json()["id"] == "copia"
     assert client.get("/api/projects/copia").json()["original_ok"]
     assert client.get("/api/projects/copia/download").status_code == 404  # ainda não montado
-    sync = client.post("/api/projects/copia/sync", json={"author": "eu"}).json()
-    assert sync["added"] == 0 and sync["removed"] == 0
+    assert client.post("/api/projects/copia/sync", json={"author": "eu"}).json()["kind"] == "sync"
+    end = time.time() + 120
+    while (st := client.get("/api/projects/copia/reprocess").json())["state"] == "running" and time.time() < end:
+        time.sleep(0.3)
+    assert st["state"] == "done", st
+    assert st["result"]["added"] == 0 and st["result"]["removed"] == 0
+    # livro digital: não há figurinas de OCR para confirmar
+    fig = client.get("/api/projects/copia/figurines").json()
+    assert not fig["available"]
+    r = client.put("/api/projects/copia/figurines", json={"labels": {"0": "♕"}, "author": "eu"})
+    assert r.status_code == 409

@@ -479,6 +479,9 @@ def compose_page(page: pymupdf.Page, original: pymupdf.Page, jobs: list[BlockJob
     # Página digitalizada: o texto original são pixels da imagem; a redação os pinta com a cor do
     # fundo em volta (papel amarelado ou quadro sombreado), não de branco.
     scanned = any(j.layout.font == OCR_FONT for j in jobs)
+    # Uma renderização só da página (não uma por trecho: decodificar a imagem inteira de uma página
+    # digitalizada centenas de vezes levava minutos por página).
+    paper = _gray(original) if scanned else None
     for job in jobs:
         for r in job.layout.span_rects:
             # folga lateral: um ponto final na borda da caixa escapava da redação (medido no livro real)
@@ -486,7 +489,7 @@ def compose_page(page: pymupdf.Page, original: pymupdf.Page, jobs: list[BlockJob
             if rect.is_empty or rect.height < 1:
                 continue
             redacted.setdefault(job.region_id, []).append(rect)
-            page.add_redact_annot(rect, fill=_background(original, rect) if scanned else (1, 1, 1))
+            page.add_redact_annot(rect, fill=_background(paper, rect) if scanned else (1, 1, 1))
     page.apply_redactions(images=pymupdf.PDF_REDACT_IMAGE_PIXELS if scanned else pymupdf.PDF_REDACT_IMAGE_NONE,
                           graphics=pymupdf.PDF_REDACT_LINE_ART_NONE, text=pymupdf.PDF_REDACT_TEXT_REMOVE)
     # Texto original que sobreviveu à redação ficaria sobreposto à tradução.
@@ -496,9 +499,10 @@ def compose_page(page: pymupdf.Page, original: pymupdf.Page, jobs: list[BlockJob
         return any(not any(b.contains(pymupdf.Point((w[0] + w[2]) / 2, (w[1] + w[3]) / 2)) for b in boards)
                    for w in page.get_text("words", clip=r))
 
+    after = _gray(page) if scanned else None
     leftovers = sorted({job.region_id for job in jobs
                         if any(survivors(pymupdf.Rect(r)) for r in job.layout.span_rects)}
-                       | {rid for rid, rects in redacted.items() if scanned and any(_ink(page, r) > 0.02 for r in rects)})
+                       | {rid for rid, rects in redacted.items() if scanned and any(_ink(after, r) > 0.02 for r in rects)})
     # (a cor de fundo é clara: "tinta" é só o que ficou abaixo de 50 % de cinza)
 
     columns = _column_bounds(jobs, page)
@@ -563,21 +567,32 @@ def compose_page(page: pymupdf.Page, original: pymupdf.Page, jobs: list[BlockJob
     )
 
 
-def _background(page: pymupdf.Page, rect: pymupdf.Rect, dpi: int = 72) -> tuple[float, float, float]:
+_GRAY_DPI = 72
+
+
+def _gray(page: pymupdf.Page) -> np.ndarray:
+    pix = page.get_pixmap(dpi=_GRAY_DPI, colorspace=pymupdf.csGRAY)
+    return np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width)
+
+
+def _crop(gray: np.ndarray, rect: pymupdf.Rect) -> np.ndarray:
+    s = _GRAY_DPI / 72
+    return gray[max(0, int(rect.y0 * s)):int(np.ceil(rect.y1 * s)), max(0, int(rect.x0 * s)):int(np.ceil(rect.x1 * s))]
+
+
+def _background(gray: np.ndarray, rect: pymupdf.Rect) -> tuple[float, float, float]:
     """Cor do papel no retângulo: o tom claro mais comum (as letras são a minoria escura)."""
-    pix = page.get_pixmap(dpi=dpi, clip=rect, colorspace=pymupdf.csGRAY)
-    if not pix.width or not pix.height:
+    part = _crop(gray, rect)
+    if not part.size:
         return (1.0, 1.0, 1.0)
-    level = float(np.percentile(np.frombuffer(pix.samples, dtype=np.uint8), 90)) / 255
+    level = float(np.percentile(part, 90)) / 255
     return (level, level, level)
 
 
-def _ink(page: pymupdf.Page, rect: pymupdf.Rect, dpi: int = 72) -> float:
+def _ink(gray: np.ndarray, rect: pymupdf.Rect) -> float:
     """Fração de pixels escuros no retângulo (o que sobrou da imagem depois da redação)."""
-    pix = page.get_pixmap(dpi=dpi, clip=rect, colorspace=pymupdf.csGRAY)
-    if not pix.width or not pix.height:
-        return 0.0
-    return float((np.frombuffer(pix.samples, dtype=np.uint8) < 128).mean())
+    part = _crop(gray, rect)
+    return float((part < 128).mean()) if part.size else 0.0
 
 
 def _overlaps(outcomes: list[BlockOutcome], tolerance: float = 1.0) -> list[str]:

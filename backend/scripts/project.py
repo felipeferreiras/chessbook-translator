@@ -7,6 +7,7 @@ Uso (a partir de backend/):
     .venv/bin/python -m scripts.project assemble ID                  # PDF traduzido em <projeto>/output/
     .venv/bin/python -m scripts.project status ID
     .venv/bin/python -m scripts.project sync ID                      # depois de atualizar o código
+    .venv/bin/python -m scripts.project figurines ID [--labels '{"3": "♕"}']  # figurinas do livro (OCR)
     .venv/bin/python -m scripts.project audit ID                     # integridade do livro inteiro
     .venv/bin/python -m scripts.project backup ID [--dest PASTA]     # .zip com manifesto e sha256
     .venv/bin/python -m scripts.project restore ARQUIVO.zip [--como NOVO_ID]
@@ -25,7 +26,7 @@ from pathlib import Path
 
 import pymupdf
 
-from app.extraction.ocr import scanned_pages
+from app.extraction.ocr import reread_with_figurines, scanned_pages
 from app.pipeline.notation_pass import collect
 from app.pipeline.segments import book_segments
 from app.store import assembly
@@ -55,6 +56,26 @@ def segment_dicts(segs) -> list[dict]:
              "flags": b.flags} for b in segs]
 
 
+def progress_writer(path: Path | None):
+    """Andamento no terminal e, se ``path``, em JSON (lido pela interface)."""
+    def progress(stage: str, i: int = 0, n: int = 0) -> None:
+        print(f"\r{stage}: {i}/{n} páginas", end="", flush=True)
+        if path:
+            tmp = path.with_name(path.name + ".tmp")
+            tmp.write_text(json.dumps({"stage": stage, "done": i, "total": n}), encoding="utf-8")
+            os.replace(tmp, path)
+    return progress
+
+
+def sync_project(store: ProjectStore, author: str, progress=None) -> dict:
+    """Alinha o projeto com a extração do código atual (num livro digitalizado, refaz o OCR se mudou)."""
+    ocr_cache = store.dir / "ocr.json"
+    doc = pymupdf.open(store.original_path)
+    notation = collect(doc, ocr_cache=ocr_cache, ocr_mode="on" if ocr_cache.exists() else "off", progress=progress)
+    segs = book_segments(notation, doc.metadata.get("title", "") or store.info["name"])
+    return store.sync_segments(segment_dicts(segs), author)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -77,6 +98,13 @@ def main() -> None:
     s.add_argument("id")
     y = sub.add_parser("sync", help="alinha o projeto com a extração do código atual, sem perder traduções")
     y.add_argument("id")
+    f = sub.add_parser("figurines", help="figurinas achadas pelo OCR; com --labels, relê o livro com elas")
+    f.add_argument("id")
+    f.add_argument("--labels", help='JSON {grupo: figurina}; "" = não é peça. Grupos omitidos: a sugestão')
+    for q in (y, f):
+        q.add_argument("--progress", type=Path, help="andamento em JSON (usado pela interface)")
+        q.add_argument("--result", type=Path, help="resultado em JSON (usado pela interface)")
+        q.add_argument("--author", default=os.environ.get("USER", "linha de comando"))
     u = sub.add_parser("audit", help="confere a integridade do livro inteiro (original, notação, montagem)")
     u.add_argument("id")
     k = sub.add_parser("backup", help="pacote .zip do projeto, com manifesto e sha256")
@@ -94,13 +122,7 @@ def main() -> None:
         doc = pymupdf.open(args.pdf)
         # páginas digitalizadas: o OCR fica guardado no projeto, e a montagem relê exatamente o mesmo texto
         ocr_tmp = root / f".{args.id}-ocr.json"
-        def progress(stage: str, i: int = 0, n: int = 0) -> None:
-            print(f"\r{stage}: {i}/{n} páginas", end="", flush=True)
-            if args.progress:
-                tmp = args.progress.with_name(args.progress.name + ".tmp")
-                tmp.write_text(json.dumps({"stage": stage, "done": i, "total": n}), encoding="utf-8")
-                os.replace(tmp, args.progress)
-
+        progress = progress_writer(args.progress)
         progress("extração", 0, doc.page_count)
         notation = collect(doc, ocr_cache=ocr_tmp, ocr_mode=args.ocr, progress=progress)
         progress("gravando o projeto", doc.page_count, doc.page_count)
@@ -110,6 +132,9 @@ def main() -> None:
         store = ProjectStore.create(root, args.id, args.name, args.pdf, doc.page_count, notation.style)
         if ocr_tmp.exists():
             ocr_tmp.replace(store.dir / "ocr.json")
+            passe1 = root / f".{args.id}-ocr-passe1.json.gz"
+            if passe1.exists():  # para reler com as figurinas confirmadas sem refazer o OCR
+                passe1.replace(store.dir / "ocr-passe1.json.gz")
             print()
         segs = book_segments(notation, doc.metadata.get("title", "") or args.name)
         store.add_book_segments(segment_dicts(segs))
@@ -141,13 +166,33 @@ def main() -> None:
             raise SystemExit(f"montagem {done.state}: {done.error} (ver {store.dir / 'output' / 'montagem.log'})")
         print(json.dumps(done.summary, ensure_ascii=False))
         print(f"PDF traduzido em {store.dir / 'output' / 'traduzido.pdf'}")
-    elif args.cmd == "sync":
-        ocr_cache = store.dir / "ocr.json"
-        doc = pymupdf.open(store.original_path)
-        notation = collect(doc, ocr_cache=ocr_cache, ocr_mode="on" if ocr_cache.exists() else "off")
-        segs = book_segments(notation, doc.metadata.get("title", "") or store.info["name"])
-        print(json.dumps(store.sync_segments(segment_dicts(segs), os.environ.get("USER", "linha de comando")),
-                         ensure_ascii=False))
+    elif args.cmd in ("sync", "figurines"):
+        progress = progress_writer(args.progress)
+        if args.cmd == "figurines":
+            from app.store.reprocess import figurines
+
+            if args.labels is None:  # só mostra os grupos
+                info = figurines(store)
+                if not info["available"]:
+                    raise SystemExit(info["reason"])
+                for g in info["groups"]:
+                    label = info["labels"].get(str(g["id"]))
+                    print(f"grupo {g['id']:>4}: {g['count']:>4} lances · OCR leu {''.join(g['ocr']) or '?'} · "
+                          f"sugestão {g['auto'] or '-'} (margem {g['margin']})"
+                          + (f" · confirmado {label or 'não é peça'}" if label is not None else ""))
+                return
+            if not (store.dir / "ocr.json").exists():
+                raise SystemExit("o livro não foi lido por OCR")
+            labels = {int(k): v for k, v in json.loads(args.labels).items()}
+            reread = reread_with_figurines(pymupdf.open(store.original_path), store.dir / "ocr.json", labels,
+                                           progress=progress)
+            print(f"\nrelido: {reread}")
+        out = sync_project(store, args.author, progress)
+        if args.cmd == "figurines":
+            out = {**out, **{f"ocr_{k}": v for k, v in reread.items()}}
+        print("\n" + json.dumps(out, ensure_ascii=False))
+        if args.result:
+            args.result.write_text(json.dumps(out, ensure_ascii=False), encoding="utf-8")
     elif args.cmd == "audit":
         report = audit(store)
         print(json.dumps({k: report[k] for k in ("ok", "complete", "original_ok")}, ensure_ascii=False))

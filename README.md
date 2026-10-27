@@ -29,7 +29,9 @@ Para traduzir, edite o `.env`: `CHESSBOOK_PRIVACY_MODE=remote_allowed` e
 
 * **Projeto**: envio do PDF; o original é copiado e conferido pelo sha256 em
   toda operação. Livros digitalizados passam por OCR com as figurinas
-  reconhecidas pelo desenho (protótipos aprendidos no próprio livro).
+  reconhecidas pelo desenho (protótipos aprendidos no próprio livro e
+  confirmados pelo usuário na tela "Figurinas do livro"); diagramas achados
+  pela moldura e preservados com coordenadas e marcas.
 * **Notação**: lances em inglês, português e figurinas (FAN), inclusive fontes
   de figurinas com letras trocadas; validação com python-chess, encadeada
   entre parágrafos e diagramas; nada é presumido.
@@ -39,8 +41,8 @@ Para traduzir, edite o `.env`: `CHESSBOOK_PRIVACY_MODE=remote_allowed` e
   motor, parágrafos escolhidos). Os lances viram marcadores e voltam
   idênticos; tradução que altere lance, casa, número ou símbolo é recusada.
 * **Revisão**: original e tradução lado a lado, com as páginas; edição
-  versionada (recusada se mudar a notação), aprovação, histórico, glossário,
-  próxima pendência.
+  versionada (recusada se mudar a notação), aprovação por parágrafo ou por
+  página, histórico, glossário, próxima pendência.
 * **Montagem**: PDF traduzido com os diagramas intocados, em partes de 20
   páginas reaproveitadas; relatório por página (fonte reduzida, cortes,
   sobreposições, sobra do original, lances ausentes, diagramas alterados) e
@@ -59,6 +61,7 @@ cd backend
 .venv/bin/python -m scripts.project assemble ID                # PDF traduzido em <projeto>/output/
 .venv/bin/python -m scripts.project audit ID                   # integridade do livro inteiro
 .venv/bin/python -m scripts.project sync ID                    # depois de atualizar o programa
+.venv/bin/python -m scripts.project figurines ID [--labels JSON] # figurinas de um livro digitalizado
 .venv/bin/python -m scripts.project backup ID                  # .zip com manifesto e sha256
 .venv/bin/python -m scripts.project restore ARQUIVO.zip [--como NOVO_ID]
 .venv/bin/python -m scripts.evaluate_ocr LIVRO.pdf --pages 21-30  # mede o OCR contra um PDF digital

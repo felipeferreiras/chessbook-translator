@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, Creation, Project, Settings } from "./api";
+import { api, Creation, FigurineInfo, Project, Reprocess, Settings } from "./api";
 
 const OCR_LABEL: Record<string, string> = {
   auto: "Automático (só se a maioria do livro for digitalizada)",
@@ -163,25 +163,118 @@ function RestoreBackup(props: { onRestored: (id: string) => void }) {
   );
 }
 
+const PIECES: [string, string][] = [["♔", "♔ rei"], ["♕", "♕ dama"], ["♖", "♖ torre"], ["♗", "♗ bispo"],
+                                    ["♘", "♘ cavalo"], ["", "não é peça"]];
+const STAGE: Record<string, string> = { "extração": "lendo o livro", ocr: "OCR", figurinas: "figurinas" };
+
+function reprocessText(r: Reprocess): string {
+  const what = r.kind === "figurines" ? "Releitura com as figurinas" : "Sincronização";
+  if (r.state === "running") {
+    const pr = r.progress;
+    return `${what} em andamento` + (pr ? `: ${STAGE[pr.stage] ?? pr.stage} ${pr.done}/${pr.total} páginas` : "…");
+  }
+  if (r.state === "done" && r.result) {
+    const x = r.result;
+    return `${what} concluída. Mantidos ${x.kept}, renomeados ${x.renamed}, novos ${x.added}, removidos ${x.removed}, ` +
+      `guardados como obsoletos ${x.obsolete}, para retraduzir ${x.retranslate}` +
+      (x.ocr_pieces !== undefined ? `; ${x.ocr_pieces} lances com peça lidos (${x.ocr_uncertain} com dúvida).` : ".") +
+      (x.added ? " Os parágrafos novos ficam pendentes: Traduzir → pendentes." : "");
+  }
+  return `${what}: ${r.error ?? r.state}`;
+}
+
+/** As figurinas que o OCR achou no livro, agrupadas pelo desenho: o usuário diz qual peça é cada grupo. */
+function FigurinesPanel(props: { projectId: string; author: string; busy: boolean; onStart: (r: Reprocess) => void }) {
+  const [info, setInfo] = useState<FigurineInfo | null>(null);
+  const [labels, setLabels] = useState<Record<string, string>>({});
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    api.figurines(props.projectId).then((f) => {
+      setInfo(f);
+      const initial: Record<string, string> = {};
+      for (const g of f.groups) initial[g.id] = f.labels[g.id] ?? (g.margin >= 0.05 ? g.auto : "");
+      setLabels(initial);
+    }, (e) => setError(String(e)));
+  }, [props.projectId, props.busy]);
+
+  if (!info || (!info.available && !info.reason.includes("versão anterior"))) return null;
+  const confirmed = Object.keys(info.labels).length > 0;
+  const submit = async () => {
+    setError("");
+    try {
+      props.onStart(await api.setFigurines(props.projectId, labels, props.author));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+  return (
+    <div className="panel">
+      <h3>Figurinas do livro</h3>
+      {!info.available ? (
+        <p className="muted small">{info.reason}.</p>
+      ) : (
+        <>
+          <p className="muted small">
+            Desenhos iguais achados no começo dos lances. Confira cada grupo e escolha a peça; depois, o livro é
+            relido com elas (alguns minutos) e só os parágrafos cujo texto mudou voltam a pendentes.
+            {confirmed ? " As escolhas atuais já foram confirmadas." : " Nada foi confirmado ainda: os valores são sugestões."}
+          </p>
+          <ul className="figurines">
+            {info.groups.map((g) => {
+              const doubtful = !(String(g.id) in info.labels) && g.margin < 0.05;
+              return (
+                <li key={g.id} className={doubtful ? "doubt" : ""}>
+                  <img src={g.image} alt={`grupo ${g.id}`} width={48} height={48} />
+                  <select value={labels[g.id] ?? ""} aria-label={`Peça do grupo ${g.id}`}
+                          onChange={(e) => setLabels({ ...labels, [g.id]: e.target.value })}>
+                    {PIECES.map(([v, t]) => <option key={v} value={v}>{t}</option>)}
+                  </select>
+                  <small>{g.count} lances · OCR leu “{g.ocr.join(" ") || "?"}”{doubtful ? " · sugestão incerta" : ""}</small>
+                </li>
+              );
+            })}
+          </ul>
+          <button className="primary" disabled={props.busy || !props.author.trim()} onClick={submit}>
+            Confirmar e reler o livro
+          </button>
+        </>
+      )}
+      {error && <p className="bad" role="alert">{error}</p>}
+    </div>
+  );
+}
+
 export default function ProjectView(props: { project: Project | null; author: string; settings: Settings | null;
                                              onOpen: (id: string) => void; onChange: () => void }) {
   const { project, settings } = props;
-  const [syncMsg, setSyncMsg] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [task, setTask] = useState<Reprocess | null>(null);
+  const [error, setError] = useState("");
+  const running = task?.state === "running";
+  const projectId = project?.id;
+  const onChange = props.onChange;
+
+  useEffect(() => {
+    setTask(null);
+    if (projectId) api.reprocess(projectId).then((r) => setTask(r.state === "none" ? null : r));
+  }, [projectId]);
+  useEffect(() => {
+    if (!running || !projectId) return;
+    const t = setInterval(async () => {
+      const r = await api.reprocess(projectId);
+      setTask(r);
+      if (r.state !== "running") onChange();
+    }, 2000);
+    return () => clearInterval(t);
+  }, [running, projectId, onChange]);
 
   const sync = async () => {
     if (!project) return;
-    setBusy(true);
-    setSyncMsg("");
+    setError("");
     try {
-      const r = await api.sync(project.id, props.author);
-      setSyncMsg(`Mantidos ${r.kept}, renomeados ${r.renamed}, novos ${r.added}, removidos ${r.removed}, ` +
-                 `guardados como obsoletos ${r.obsolete}, para retraduzir ${r.retranslate}.`);
-      props.onChange();
+      setTask(await api.sync(project.id, props.author));
     } catch (e) {
-      setSyncMsg(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
+      setError(e instanceof Error ? e.message : String(e));
     }
   };
 
@@ -201,14 +294,16 @@ export default function ProjectView(props: { project: Project | null; author: st
               ? <a className="button primary" href={api.downloadUrl(project.id)}>Baixar PDF traduzido</a>
               : <span className="muted">PDF traduzido ainda não montado (aba Qualidade).</span>}
             <a className="button" href={api.backupUrl(project.id)}>Baixar backup</a>
-            <button disabled={busy || !props.author.trim()} onClick={sync}
-                    title="Depois de atualizar o programa: alinha os parágrafos com a extração nova, sem perder traduções">
-              {busy ? "Sincronizando…" : "Sincronizar com a versão atual"}
+            <button disabled={running || !props.author.trim()} onClick={sync}
+                    title="Depois de atualizar o programa: alinha os parágrafos com a extração nova, sem perder traduções. Num livro digitalizado, refaz o OCR (cerca de 5 s por página)">
+              {running ? "Reprocessando…" : "Sincronizar com a versão atual"}
             </button>
           </div>
-          {syncMsg && <p className="small">{syncMsg}</p>}
+          {task && <p className={`small${task.state === "failed" ? " bad" : ""}`} role="status">{reprocessText(task)}</p>}
+          {error && <p className="bad small" role="alert">{error}</p>}
         </div>
       )}
+      {project && <FigurinesPanel projectId={project.id} author={props.author} busy={running} onStart={setTask} />}
       <NewProject settings={settings} onCreated={props.onOpen} />
       <RestoreBackup onRestored={props.onOpen} />
       {settings && (

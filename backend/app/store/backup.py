@@ -5,7 +5,9 @@ O pacote leva tudo o que não se refaz sem custo ou sem trabalho humano:
 * ``app.db``: segmentos, todas as versões, revisões, tarefas, gastos (cópia
   consistente pela API de backup do SQLite, mesmo com uma tarefa rodando);
 * ``original/``: o PDF original (o sha256 também está no banco);
-* ``glossary.json`` e ``ocr.json``, se houver;
+* ``glossary.json`` e ``ocr.json``, se houver, com as figurinas confirmadas
+  (``ocr-figurinas.json``) e a primeira passada do OCR (``ocr-passe1.json.gz``,
+  para reler com outras figurinas sem refazer o OCR);
 * ``cache.sqlite``: as traduções já pagas (retraduzir sairia de graça);
 * opcionalmente ``output/`` (PDF traduzido, relatório, auditoria). As partes e
   as imagens lado a lado ficam de fora: a montagem as refaz.
@@ -33,7 +35,7 @@ from .project_store import ProjectStore, StoreError, _sha256
 
 FORMAT = 1
 MAX_UNCOMPRESSED = 8 * 1024**3  # 8 GB: livro, banco e PDF traduzido cabem com folga
-_ALLOWED = re.compile(r"^(manifest\.json|app\.db|glossary\.json|ocr\.json|cache\.sqlite|original/[^/]+\.pdf|"
+_ALLOWED = re.compile(r"^(manifest\.json|app\.db|glossary\.json|ocr\.json|ocr-figurinas\.json|ocr-passe1\.json\.gz|cache\.sqlite|original/[^/]+\.pdf|"
                       r"output/(traduzido\.pdf|relatorio\.json|pages\.txt|auditoria\.json))$")
 _ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
@@ -60,7 +62,7 @@ def create_backup(store: ProjectStore, dest_dir: Path, include_output: bool = Tr
             _sqlite_copy(store.dir / "cache.sqlite", cache_copy)
             files["cache.sqlite"] = cache_copy
         files[f"original/{store.original_path.name}"] = store.original_path
-        for name in ("glossary.json", "ocr.json"):
+        for name in ("glossary.json", "ocr.json", "ocr-figurinas.json", "ocr-passe1.json.gz"):
             if (store.dir / name).exists():
                 files[name] = store.dir / name
         if include_output:

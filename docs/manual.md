@@ -42,8 +42,24 @@ cerca de 5 s por página e acontece uma vez só.
 
 **Páginas digitalizadas**: no modo automático, só livros majoritariamente
 digitalizados passam pelo OCR (a capa de um livro digital fica como imagem).
-Todo parágrafo lido por OCR pede conferência com a página original antes da
-aprovação.
+Os diagramas são achados pela moldura e pelas casas alternadas e ficam
+intactos, com coordenadas, números e marcas ao redor.
+
+### Figurinas do livro (livros digitalizados)
+
+Cada livro desenha as peças do seu jeito, e o OCR não as conhece (a dama do
+*Grandmaster Preparation* sai como "W"). Depois de criar o projeto, abra
+**Projeto → Figurinas do livro**: cada grupo mostra um desenho achado no começo
+dos lances, quantas vezes aparece e o que o OCR leu. Escolha a peça de cada
+grupo (ou "não é peça") e clique **Confirmar e reler o livro**. O livro é
+relido com essas figurinas (cerca de 1 min a cada 20 páginas) e só os
+parágrafos cujo texto mudou voltam a pendentes; traduções feitas ficam
+guardadas no histórico. Grupos com a borda laranja são sugestões incertas:
+confira com mais atenção. A escolha vale também quando o OCR for refeito
+depois de atualizar o programa.
+
+Faça isso **antes de traduzir**: parágrafos traduzidos com a peça errada
+precisam ser traduzidos de novo.
 
 ## 3. Traduzir
 
@@ -78,9 +94,21 @@ o original e a tradução editável.
   a aprovação.
 * **Histórico**: todas as versões, com quem e quando; "Voltar a esta versão".
 * **Retraduzir…**: outra tentativa automática, com previsão de custo.
+* **Aprovar página**: aprova de uma vez os parágrafos traduzidos da página,
+  depois de conferi-los com a página original. Recusas da proteção, falhas e
+  parágrafos sem tradução ficam de fora.
 * **Próxima pendência** e o filtro "só o que pede atenção" levam ao que falta:
   recusas da proteção, falhas, glossário contrariado, parágrafos bloqueados
-  (lances desenhados como imagem) e textos de OCR ainda não aprovados.
+  (lances desenhados como imagem) e, nos livros digitalizados, parágrafos com
+  um aviso do OCR sobre um lance, casa ou número (peça incerta, lance
+  incompleto, desenho não lido, leitura sem confiança) ainda não aprovados.
+  O aviso geral "texto lido da imagem" aparece em todo parágrafo de OCR, mas
+  não pede atenção sozinho; uma palavra comum mal lida também não.
+* Trechos ilegíveis do OCR (rótulos, marcas, restos de desenho) **ficam como na
+  imagem**, nunca são apagados. Os curtos não pedem nada; os longos pedem uma
+  olhada e saem da lista com **Manter como na imagem**.
+* Trocas do OCR com uma leitura só são corrigidas e ficam anotadas no
+  parágrafo: "♖el" → "♖e1", "4l." → "41.", "t" no fim do lance → "†".
 
 Aba **Glossário**: termos com tradução preferida, alternativas e traduções a
 evitar. Mudou um termo? "O que traduzir → afetados pelo glossário" retraduz só
@@ -115,8 +143,16 @@ identificador para ter uma cópia). Pela linha de comando:
 
 Aba **Projeto → Sincronizar com a versão atual**: uma versão nova pode ler o
 livro de forma um pouco diferente (por exemplo, dividir um parágrafo). A
-sincronização alinha os parágrafos pelo texto, sem perder traduções; uma
-tradução só volta a pendente se o texto protegido mudou.
+sincronização alinha os parágrafos pelo texto, sem perder traduções; só o
+parágrafo cujo texto mudou volta a pendente (a tradução antiga fica guardada
+como obsoleta). Num livro digitalizado, se o OCR mudou, ele é refeito (cerca
+de 5 s por página): a sincronização roda em segundo plano, com o andamento na
+tela, e pode-se continuar usando o resto do programa. Depois, confira as
+**Figurinas do livro** e traduza os pendentes (Traduzir → pendentes).
+
+Pela linha de comando: `scripts.project sync ID` e
+`scripts.project figurines ID` (mostra os grupos) ou
+`scripts.project figurines ID --labels '{"2": "♕", "4": ""}'` (confirma e relê).
 
 ## 8. Problemas comuns
 
@@ -127,6 +163,8 @@ tradução só volta a pendente se o texto protegido mudou.
 | Montagem recusa: "não corresponde ao texto extraído" | Projeto → Sincronizar |
 | Página com fonte muito reduzida | edite o parágrafo para ficar mais curto (cabeçalhos de partida) e monte de novo |
 | Parágrafo "bloqueado" | os lances estão desenhados como imagem no PDF: traduza à mão na revisão |
+| Livro digitalizado: peça lida como letra ("We4") | Projeto → Figurinas do livro: escolha a peça do grupo e releia |
+| Quase todos os parágrafos pedem atenção | Projeto → Sincronizar (versão nova do OCR), depois Figurinas do livro |
 | Tarefa "interrompida" | Traduzir → Retomar… |
 
 Limitações conhecidas: `docs/limitacoes.md`. Segurança: `docs/quality/seguranca.md`.

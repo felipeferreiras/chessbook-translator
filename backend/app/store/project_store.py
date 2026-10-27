@@ -15,6 +15,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import sqlite3
 import stat
@@ -25,6 +26,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from app.chess.notation.lexer import LexStyle
+from app.pipeline.notation_pass import OCR_FLAG
+from app.pipeline.segments import OCR_SHORT_MARK
 from app.translation.glossary import Glossary, GlossaryEntry
 from app.translation.guard import GuardViolation, mask_edit, protect, restore
 from app.translation.prompt import glossary_signature
@@ -117,6 +120,27 @@ def _sha256(path: Path) -> str:
     return h.hexdigest()
 
 
+_NOTATION_HINT = re.compile(r"[0-9♔♕♖♗♘♚♛♜♝♞]|\b[a-h][1-8]|[+#†]")
+# avisos que só nascem de algo com forma de lance: sempre pedem conferência
+_MOVE_WARNINGS = ("ocr_peca_incerta", "ocr_lance_incompleto", "ocr_lance_ilegivel", "ocr_figurina_sem_lugar")
+
+
+def _touches_notation(flag: str) -> bool:
+    """O aviso específico do OCR recai sobre algo que pode ser lance, casa, número ou peça.
+
+    Uma palavra comum lida com pouca confiança ("Morales," "White's") é risco
+    de prosa, que a tradução e a revisão pegam; não pede conferência de lance.
+    """
+    if flag == OCR_FLAG or flag.startswith("ocr_corrigido:"):  # troca com uma leitura só (fica registrada)
+        return False
+    if flag.startswith(_MOVE_WARNINGS):
+        return True
+    start, end = flag.find("'"), flag.rfind("'")
+    if start < 0 or end <= start:
+        return True
+    return bool(_NOTATION_HINT.search(flag[start + 1:end]))
+
+
 @dataclass
 class Version:
     version: int
@@ -143,12 +167,26 @@ class SegmentView:
     source_flags: list[str] = field(default_factory=list)  # dúvidas sobre o texto de origem (OCR)
 
     @property
+    def kept_as_image(self) -> bool:
+        """Bloco do OCR que fica como na imagem (rótulo, marca, desenho lido como letras)."""
+        return self.status == "blocked" and any(p.startswith("ocr:") for p in self.machine_problems)
+
+    @property
     def needs_attention(self) -> bool:
-        """Precisa de olhos humanos: falhou, a proteção recusou, o glossário foi contrariado,
-        ou o texto de origem veio do OCR e ainda não foi conferido (aprovado)."""
-        if self.status in ("needs_review", "failed", "blocked"):
+        """Precisa de olhos humanos: falhou, a proteção recusou, o glossário foi contrariado, os
+        lances estão desenhados como vetor, ou o OCR deixou um aviso específico ainda não conferido.
+
+        O aviso geral de todo texto de OCR (``OCR_FLAG``) não conta: num livro
+        digitalizado ele marcaria todos os parágrafos e esconderia os que importam.
+        Um rótulo curto ilegível fica como na imagem sem pedir nada.
+        """
+        if self.status in ("needs_review", "failed"):
             return True
-        if self.source_flags and not self.approved:
+        if self.status == "blocked":
+            if not self.kept_as_image:
+                return True
+            return not self.approved and not any(p.startswith(OCR_SHORT_MARK) for p in self.machine_problems)
+        if not self.approved and any(_touches_notation(f) for f in self.source_flags):
             return True
         return bool(self.current and any(w.startswith("glossario_evitar:") for w in self.current.warnings))
 
@@ -567,15 +605,35 @@ class ProjectStore:
         return self.history(segment_id)[new - 1]
 
     def approve(self, segment_id: str, author: str, approved: bool = True) -> None:
+        """Marca como conferido. Um bloco do OCR que fica como na imagem pode ser aprovado sem tradução."""
         with self._db() as db:
-            row = db.execute("SELECT current_version FROM segment WHERE id=?", (segment_id,)).fetchone()
+            row = db.execute("SELECT * FROM segment WHERE id=?", (segment_id,)).fetchone()
             if row is None:
                 raise StoreError(f"segmento inexistente: {segment_id}")
-            if approved and row["current_version"] is None:
+            if approved and row["current_version"] is None and not self._view(db, row).kept_as_image:
                 raise StoreError("não há tradução para aprovar")
             db.execute("UPDATE segment SET approved=? WHERE id=?", (int(approved), segment_id))
             self._log(db, "segment", segment_id, "approve" if approved else "unapprove", None,
                       str(row["current_version"]), author)
+
+    def approve_page(self, page: int, author: str) -> dict:
+        """Aprova de uma vez o que a página tem de traduzido (ou mantido como na imagem).
+
+        Não aprova o que a proteção recusou ou o que falhou: isso pede correção, não conferência.
+        """
+        done, skipped = [], []
+        with self._db() as db:
+            for row in db.execute("SELECT * FROM segment WHERE page=? AND status != 'obsolete' AND approved=0"
+                                  " ORDER BY ordinal", (page,)).fetchall():
+                view = self._view(db, row)
+                if view.status in ("needs_review", "failed") or (view.current is None and not view.kept_as_image):
+                    if view.status != "not_needed":
+                        skipped.append(view.id)
+                    continue
+                db.execute("UPDATE segment SET approved=1 WHERE id=?", (view.id,))
+                self._log(db, "segment", view.id, "approve", None, str(row["current_version"]), author)
+                done.append(view.id)
+        return {"approved": done, "skipped": skipped}
 
     # --- glossário do projeto ---------------------------------------------------
     @property

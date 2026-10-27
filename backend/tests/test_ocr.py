@@ -74,6 +74,37 @@ def test_board_found_by_its_frame_and_checkered_squares():
     assert ocr.detect_boards(gray, 300 / 72) == []
 
 
+def _hatched_board(side: int = 300, line: int = 3) -> np.ndarray:
+    """Tabuleiro como nos livros digitalizados: casas escuras com hachura fina e clara, moldura fina."""
+    img = np.full((side, side), 255, np.uint8)
+    sq = side // 8
+    yy, xx = np.mgrid[0:sq, 0:sq]
+    hatch = np.where((xx + yy) % 6 == 0, 150, 255).astype(np.uint8)  # traço diagonal claro
+    for r in range(8):
+        for c in range(8):
+            if (r + c) % 2:
+                img[r * sq:(r + 1) * sq, c * sq:(c + 1) * sq] = hatch
+    img[(np.arange(side) % 50 == 7)[:, None] & (np.arange(side) % 37 < 20)[None, :]] = 0  # peças
+    img[:line], img[-line:], img[:, :line], img[:, -line:] = 0, 0, 0, 0
+    return img
+
+
+def test_board_found_on_a_crooked_scan_with_light_hatching():
+    """Página digitalizada um pouco torta: a moldura chega aos pedaços e a hachura é clara."""
+    page = np.full((1300, 800), 255, np.uint8)
+    board = _hatched_board(480)  # ~115 pt a 300 dpi
+    for x in range(480):  # inclinação de 6 px ao longo do tabuleiro
+        dy = x * 6 // 480
+        page[100 + dy:580 + dy, 100 + x] = board[:, x]
+    # caixa de texto emoldurada do mesmo tamanho: não é tabuleiro
+    page[700:703, 100:580] = page[1177:1180, 100:580] = 0
+    page[700:1180, 100:103] = page[700:1180, 577:580] = 0
+    page[720:1160:20, 120:560] = 0
+    boards = ocr.detect_boards(page, 300 / 72)
+    assert len(boards) == 1
+    assert abs(boards[0][1] * 300 / 72 - 100) < 8
+
+
 def test_piece_drawn_as_letter_is_classified_as_that_letter():
     doc = pymupdf.open()
     page = doc.new_page(width=200, height=60)
@@ -127,7 +158,9 @@ def test_scanned_book_goes_through_extraction_review_and_assembly(tmp_path, monk
                               "kind": b.kind, "bold": b.region.main_mask, "italic": b.region.italic_mask,
                               "blocked": b.blocked, "flags": b.flags} for b in segs])
     seg = next(s for s in store.segments() if s.status == "pending")
-    assert seg.needs_attention and OCR_FLAG in seg.source_flags
+    # só o aviso geral não pede atenção; um aviso sobre lance, casa ou número pede, até a aprovação
+    assert OCR_FLAG in seg.source_flags
+    assert seg.needs_attention == any(f != OCR_FLAG and any(c.isdigit() for c in f) for f in seg.source_flags)
     with store._db() as db:
         db.execute("INSERT INTO job (engine, model, pages, state, budget, author, created_at)"
                    " VALUES ('pseudo','pseudo','1','queued',1,'t','t')")
@@ -154,3 +187,67 @@ def test_digital_book_with_an_image_page_is_not_read_by_ocr(monkeypatch):
     notation = collect(book)
     assert {r.page for r in notation.regions} == {1, 2}
     assert ocr.document_ocr(book, mode="off") == {}
+
+
+@needs_tesseract
+def test_user_confirmed_figurine_is_read_in_the_whole_book(tmp_path):
+    """Uma figurina que aparece pouco não vira protótipo sozinha; confirmada pelo usuário, é lida."""
+    import json
+
+    page = pymupdf.open(stream=syn.build_page("fan_unicode").pdf_bytes, filetype="pdf")[0]
+    pdf = tmp_path / "digitalizado.pdf"
+    _scanned(page, noise=4).save(pdf)
+    doc = pymupdf.open(pdf)
+    cache = tmp_path / "ocr.json"
+    before = " ".join(r.resolved.text for r in collect(doc, ocr_cache=cache).regions)
+    assert "2.♘f3" not in before  # o cavalo aparece só duas vezes: sem protótipo
+    groups = json.loads(cache.read_text())["figurine_groups"]
+    knight = next(g for g in groups if g["auto"] == "♘")
+    assert knight["count"] == 2 and knight["image"].startswith("data:image/png;base64,")
+
+    with pytest.raises(ValueError):
+        ocr.reread_with_figurines(doc, cache, {knight["id"]: "X"})
+    res = ocr.reread_with_figurines(doc, cache, {knight["id"]: "♘"})
+    assert res["pages"] == 1
+    after = " ".join(r.resolved.text for r in collect(doc, ocr_cache=cache).regions)
+    assert "2.♘f3" in after and "♘c6" in after
+    saved = json.loads((tmp_path / "ocr-figurinas.json").read_text())
+    assert {c["char"] for c in saved} >= {"♘", "♗"}  # o bispo não marcado fica com a sugestão
+    assert json.loads(cache.read_text())["labels"][str(knight["id"])] == "♘"
+
+    # um OCR refeito (programa atualizado) herda a decisão pelo desenho
+    stored = json.loads(cache.read_text())
+    cache.write_text(json.dumps({**stored, "version": "antiga"}))
+    redone = " ".join(r.resolved.text for r in collect(doc, ocr_cache=cache).regions)
+    assert "2.♘f3" in redone
+    labels = json.loads(cache.read_text())["labels"]
+    assert "♘" in labels.values()
+
+
+@pytest.mark.parametrize("read, fixed", [
+    ("23.♖el", "23.♖e1"), ("16.♖fd]", "16.♖fd1"), ("27...♕xf4t", "27...♕xf4†"), ("4l.fxg5t", "41.fxg5†"),
+    ("24.♕xe4t!", "24.♕xe4†!"), ("31.e4t", "31.e4†"), ("♖dlt", "♖d1†"),
+    # prosa e lances já certos ficam como estão
+    ("et", "et"), ("al", "al"), ("Bel", "Bel"), ("8.♖e1+", "8.♖e1+"), ("48.gxh4", "48.gxh4"),
+])
+def test_ocr_misreads_with_a_single_reading_are_fixed(read, fixed):
+    assert ocr.fix_move_glyphs(read) == (fixed, read != fixed)
+
+
+@needs_tesseract
+def test_project_creation_keeps_ocr_files_inside_the_project(tmp_path):
+    """O OCR da criação fica no projeto: nada na pasta comum que outro projeto possa herdar."""
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    page = pymupdf.open(stream=syn.build_page("fan_unicode").pdf_bytes, filetype="pdf")[0]
+    pdf = tmp_path / "digitalizado.pdf"
+    _scanned(page, noise=4).save(pdf)
+    root = tmp_path / "storage"
+    subprocess.run([sys.executable, "-m", "scripts.project", "create", "scan", "Digitalizado", str(pdf)], check=True,
+                   cwd=Path(__file__).resolve().parents[1], env={**os.environ, "CHESSBOOK_STORAGE": str(root)},
+                   capture_output=True)
+    assert {p.name for p in (root / "scan").iterdir()} >= {"ocr.json", "ocr-passe1.json.gz"}
+    assert sorted(p.name for p in root.iterdir() if p.is_file()) == []

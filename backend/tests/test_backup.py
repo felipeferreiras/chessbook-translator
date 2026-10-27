@@ -26,10 +26,15 @@ def store(tmp_path):
 
 
 def test_backup_and_restore_bring_everything_back(store, tmp_path):
+    (store.dir / "ocr.json").write_text("{}")
+    (store.dir / "ocr-figurinas.json").write_text('[{"group": 2, "char": "♕"}]')  # decisão do usuário
+    (store.dir / "ocr-passe1.json.gz").write_bytes(b"\x1f\x8b")
     path = create_backup(store, tmp_path / "backups")
     manifest = read_manifest(path)
-    assert {"app.db", "original/livro.pdf", "output/traduzido.pdf"} <= set(manifest["files"])
+    assert {"app.db", "original/livro.pdf", "output/traduzido.pdf", "ocr.json", "ocr-figurinas.json",
+            "ocr-passe1.json.gz"} <= set(manifest["files"])
     restored = restore_backup(path, tmp_path / "outro-lugar")
+    assert (restored.dir / "ocr-figurinas.json").read_text() == (store.dir / "ocr-figurinas.json").read_text()
     assert restored.verify_original() and restored.info["name"] == "Livro"
     assert [v.text for v in restored.history("p1-0")] == [v.text for v in store.history("p1-0")]
     assert restored.segment("p1-0").current.kind == "edit"

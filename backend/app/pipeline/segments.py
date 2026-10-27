@@ -18,6 +18,8 @@ from .sections import SectionInfo, assign_sections
 
 # Marcas ao lado do diagrama: vez de jogar ("W", "B?") e tipo de exercício ("Play"). Não são traduzidas:
 # o modelo as trocava de forma inconsistente ("W?" virou "As brancas?" e até "B?", que muda o sentido).
+# bloco curto ilegível do OCR (rótulo, coordenada, marca): fica como na imagem sem pedir conferência
+OCR_SHORT_MARK = "ocr: texto curto lido sem confiança"
 DIAGRAM_LABEL = re.compile(r"^(?:[WB][?!]*|Play|Draw|Win)(?:\s+(?:[WB][?!]*|Play|Draw|Win))*$")
 
 
@@ -41,8 +43,12 @@ class BookSegment:
             return (f"{self.region.vector_glyphs} glifos desenhados como vetor (lances sem texto extraível): "
                     "o bloco fica no original para revisão")
         text = self.region.resolved.text.strip()
-        if len(text) <= 12 and any(f.startswith("ocr_baixa_confianca") for f in self.region.source_flags):
-            return "ocr: texto curto lido sem confiança (rótulo ou marca); fica como na imagem"
+        low = sum(f.startswith("ocr_baixa_confianca") for f in self.region.source_flags)
+        if len(text) <= 12 and low:
+            return f"{OCR_SHORT_MARK} (rótulo ou marca); fica como na imagem"
+        words = len(text.split())
+        if words and low / words >= 0.5:
+            return "ocr: a maior parte do texto foi lida sem confiança (provavelmente não é texto); fica como na imagem"
         return ""
 
     @property

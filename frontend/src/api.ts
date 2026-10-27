@@ -23,6 +23,32 @@ export interface Segment {
   machine_problems: string[];
   source_flags: string[];
   needs_attention: boolean;
+  kept_as_image: boolean;
+}
+
+export interface Reprocess {
+  kind?: "sync" | "figurines";
+  state: "none" | "running" | "done" | "failed" | "interrupted";
+  progress?: { stage: string; done: number; total: number };
+  result?: Record<string, number> | null;
+  error?: string | null;
+}
+
+export interface FigurineGroup {
+  id: number;
+  count: number;
+  auto: string;
+  score: number;
+  margin: number;
+  ocr: string[];
+  image: string;
+}
+
+export interface FigurineInfo {
+  available: boolean;
+  reason: string;
+  labels: Record<string, string>;
+  groups: FigurineGroup[];
 }
 
 export interface PageSummary {
@@ -245,7 +271,11 @@ export const api = {
     return call<{ id: string; name: string }>("/backups/restore", { method: "POST", body });
   },
   sync: (id: string, author: string) =>
-    call<Record<string, number>>(`${p(id)}/sync`, { method: "POST", body: JSON.stringify({ author }) }),
+    call<Reprocess>(`${p(id)}/sync`, { method: "POST", body: JSON.stringify({ author }) }),
+  reprocess: (id: string) => call<Reprocess>(`${p(id)}/reprocess`),
+  figurines: (id: string) => call<FigurineInfo>(`${p(id)}/figurines`),
+  setFigurines: (id: string, labels: Record<string, string>, author: string) =>
+    call<Reprocess>(`${p(id)}/figurines`, { method: "PUT", body: JSON.stringify({ labels, author }) }),
   backupUrl: (id: string) => `/api${p(id)}/backup`,
   downloadUrl: (id: string) => `/api${p(id)}/download`,
   projects: () => call<{ id: string; name: string; pages: number }[]>("/projects"),
@@ -260,6 +290,11 @@ export const api = {
     call<Segment>(`${p(id)}/segments/${seg}/approve`, {
       method: "POST",
       body: JSON.stringify({ approved, author }),
+    }),
+  approvePage: (id: string, page: number, author: string) =>
+    call<{ approved: string[]; skipped: string[] }>(`${p(id)}/pages/${page}/approve`, {
+      method: "POST",
+      body: JSON.stringify({ author }),
     }),
   glossary: (id: string) => call<GlossaryEntry[]>(`${p(id)}/glossary`),
   setGlossary: (id: string, entry: Omit<GlossaryEntry, "source">, author: string) =>

@@ -27,7 +27,7 @@ from app.api.security import LocalOnlyMiddleware
 from app.pipeline.segments import parse_pages
 from app.store import assembly as assembler
 from app.store import audit as audit_store
-from app.store import creation
+from app.store import creation, reprocess
 from app.store import jobs as job_runner
 from app.store.backup import create_backup, restore_backup
 from app.store.project_store import MODES, GuardViolation, ProjectStore, SegmentView, StoreError
@@ -80,6 +80,7 @@ def _segment_id(segment_id: str) -> str:
 def _view(s: SegmentView) -> dict:
     out = asdict(s)
     out["needs_attention"] = s.needs_attention
+    out["kept_as_image"] = s.kept_as_image
     return out
 
 
@@ -223,21 +224,40 @@ def download(project_id: str) -> FileResponse:
 
 @app.post("/api/projects/{project_id}/sync")
 def sync(project_id: str, body: AuthorIn) -> dict:
-    """Alinha o projeto com a extração do código atual, sem perder traduções."""
-    import pymupdf as _pm
+    """Alinha o projeto com a extração do código atual, sem perder traduções (em outro processo:
+    num livro digitalizado, refaz o OCR). O andamento sai em ``/reprocess``."""
+    try:
+        return reprocess.start(_store(project_id), "sync", body.author)
+    except StoreError as exc:
+        raise HTTPException(409, str(exc)) from exc
 
-    from app.pipeline.notation_pass import collect
-    from app.pipeline.segments import book_segments
 
+@app.get("/api/projects/{project_id}/reprocess")
+def reprocess_status(project_id: str) -> dict:
+    return reprocess.status(_store(project_id)) or {"state": "none"}
+
+
+class FigurinesIn(BaseModel):
+    labels: dict[str, str] = Field(min_length=1, max_length=200)
+    author: str = Field(min_length=1, max_length=80)
+
+
+@app.get("/api/projects/{project_id}/figurines")
+def figurines(project_id: str) -> dict:
+    """Desenhos de peça achados pelo OCR, agrupados: o usuário confirma qual figurina é cada grupo."""
+    return reprocess.figurines(_store(project_id))
+
+
+@app.put("/api/projects/{project_id}/figurines")
+def set_figurines(project_id: str, body: FigurinesIn) -> dict:
+    """Grava as figurinas confirmadas e relê o livro com elas (em outro processo), depois sincroniza."""
     store = _store(project_id)
-    ocr_cache = store.dir / "ocr.json"
-    doc = _pm.open(store.original_path)
-    segs = book_segments(collect(doc, ocr_cache=ocr_cache, ocr_mode="on" if ocr_cache.exists() else "off"),
-                         doc.metadata.get("title", "") or store.info["name"])
-    return store.sync_segments([{"id": b.id, "page": b.page, "section": b.section.label,
-                                 "source": b.region.resolved.text, "kind": b.kind, "bold": b.region.main_mask,
-                                 "italic": b.region.italic_mask, "blocked": b.blocked, "flags": b.flags}
-                                for b in segs], body.author)
+    if not reprocess.figurines(store)["available"]:
+        raise HTTPException(409, reprocess.figurines(store)["reason"])
+    try:
+        return reprocess.start(store, "figurines", body.author, body.labels)
+    except StoreError as exc:
+        raise HTTPException(409, str(exc)) from exc
 
 
 @app.get("/api/projects/{project_id}")
@@ -291,6 +311,12 @@ def approve(project_id: str, segment_id: str, body: ApproveIn) -> dict:
     except StoreError as exc:
         raise HTTPException(409, str(exc)) from exc
     return _view(store.segment(segment_id))
+
+
+@app.post("/api/projects/{project_id}/pages/{page}/approve")
+def approve_page(project_id: str, page: int, body: AuthorIn) -> dict:
+    """Aprova o que a página tem de traduzido; recusas da proteção e falhas ficam de fora."""
+    return _store(project_id).approve_page(page, body.author)
 
 
 @app.get("/api/projects/{project_id}/revisions")

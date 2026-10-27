@@ -399,7 +399,7 @@ def collect(doc: pymupdf.Document, pages: range | None = None, ocr_cache=None, o
     ``ocr_mode``), guardado em ``ocr_cache`` para que a montagem leia
     exatamente o mesmo texto.
     """
-    from app.extraction.ocr import document_ocr
+    from app.extraction.ocr import diagram_area, document_ocr
 
     result = DocumentNotation()
     page_numbers = list(pages or range(doc.page_count))
@@ -413,7 +413,8 @@ def collect(doc: pymupdf.Document, pages: range | None = None, ocr_cache=None, o
         ocr = scanned.get(pno + 1)
         if ocr is not None:
             blocks = ocr["blocks"]
-            for box in ocr["boards"]:
+            for box in ocr["boards"]:  # o diagrama inteiro: tabuleiro, coordenadas e marcas em volta
+                box = tuple(max(0.0, v) for v in diagram_area(tuple(box)))
                 result.diagrams.append(Diagram(pno + 1, tuple(round(v, 1) for v in box), DiagramReading(
                     None, ["imagem: a posição do diagrama não é lida em páginas digitalizadas"])))
         else:

@@ -119,6 +119,44 @@ def test_blocked_segment_is_never_sent_and_asks_for_attention(store):
     assert store.sources({4}) == []
 
 
+def test_ocr_attention_only_for_specific_warnings_on_notation(store):
+    from app.pipeline.notation_pass import OCR_FLAG
+    from app.pipeline.segments import OCR_SHORT_MARK
+
+    store.add_book_segments([
+        {"id": "p5-0", "page": 5, "section": "C", "source": "White plays on.", "flags": [OCR_FLAG]},
+        {"id": "p5-1", "page": 5, "section": "C", "source": "Morales wins.",
+         "flags": [OCR_FLAG, "ocr_baixa_confianca: 'Morales' (40)", "ocr_corrigido: '♖el' → '♖e1'"]},
+        {"id": "p5-2", "page": 5, "section": "C", "source": "Then 23.♕e4 wins.",
+         "flags": [OCR_FLAG, "ocr_peca_incerta: '23.♕e4'"]},
+        {"id": "p5-3", "page": 5, "section": "C", "source": "7 x Yi,", "flags": [OCR_FLAG],
+         "blocked": f"{OCR_SHORT_MARK} (rótulo ou marca); fica como na imagem"},
+        {"id": "p5-4", "page": 5, "section": "C", "source": "|\tk kaw w& WW",
+         "blocked": "ocr: a maior parte do texto foi lida sem confiança (provavelmente não é texto); fica como na imagem"},
+    ])
+    segs = {s.id: s for s in store.segments(5)}
+    # o aviso geral e a prosa duvidosa não pedem atenção; o lance duvidoso e o bloco ilegível longo pedem
+    assert [sid for sid, s in segs.items() if s.needs_attention] == ["p5-2", "p5-4"]
+    assert segs["p5-3"].kept_as_image and segs["p5-4"].kept_as_image
+    store.approve("p5-4", "revisor")  # conferido: fica como na imagem, sem tradução
+    assert not store.segment("p5-4").needs_attention
+    with pytest.raises(StoreError):
+        store.approve("p5-2", "revisor")  # sem tradução ainda
+
+
+def test_approve_page_skips_refusals_and_untranslated(store):
+    store.add_book_segments([{"id": "p2-5", "page": 2, "section": "C", "source": "Black resigns."}])
+    store.edit("p2-2", "As brancas vencem.", "revisor")
+    with store._db() as db:
+        db.execute("UPDATE segment SET status='needs_review' WHERE id='p2-2'")
+    r = store.approve_page(1, "revisor")
+    assert r == {"approved": ["p1-0"], "skipped": []}  # p1-1 é só notação
+    assert store.segment("p1-0").approved
+    r = store.approve_page(2, "revisor")
+    assert r["approved"] == [] and set(r["skipped"]) == {"p2-2", "p2-5"}
+    assert store.approve_page(1, "revisor") == {"approved": [], "skipped": []}
+
+
 @pytest.fixture
 def bare(tmp_path):
     pdf = tmp_path / "livro.pdf"
