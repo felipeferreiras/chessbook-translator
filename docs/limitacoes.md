@@ -49,7 +49,7 @@ que o aplicativo faz para não esconder o problema.
 * 71–84 % dos lances com peça lidos certos no livro de amostra; 1–2 % errados
   **sem** aviso específico. Por isso todo parágrafo de OCR leva o aviso geral
   "confira com a imagem", mas só pede atenção quando há um aviso específico
-  sobre lance, casa ou número (no *Grandmaster Preparation*: ~40 % dos
+  sobre lance, casa ou número (no *Grandmaster Preparation*: 32 % dos
   parágrafos). Confira os demais pela página inteira e use "Aprovar página".
 * As figurinas de cada livro precisam de confirmação na tela "Figurinas do
   livro": sem ela, um desenho que se parece com outra peça (a dama do
@@ -68,6 +68,9 @@ que o aplicativo faz para não esconder o problema.
   diagrama sem moldura não é achado: o texto lido dele sai como trecho
   ilegível que "fica como na imagem" (nada é apagado).
 * Negrito dos lances não é recuperado: a tradução sai sem o destaque.
+* A conferência dos diagramas compara a área do diagrama com uma folga em
+  volta; texto traduzido da coluna vizinha que entra nessa folga aparece como
+  "diagrama alterado" sem que o tabuleiro tenha mudado (confira pela imagem).
 * Docling avaliado e não adotado (ADR-0007); RapidOCR não testado (modelos em
   `www.modelscope.cn`, bloqueado no ambiente de desenvolvimento).
 

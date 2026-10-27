@@ -17,7 +17,9 @@ nenhum crédito gasto, nenhum texto do livro no repositório.
 | Dama como "W" | o grupo de desenhos da dama ficou mais parecido com o rei da referência (margem 0,02): sem protótipo, o lance saiu com a letra lida |
 | Tudo pedindo atenção | o aviso geral de OCR ("confira com a imagem") estava em todo parágrafo e contava como pendência |
 | Montagem lenta | a imagem de 24 MP era renderizada a cada bloco: mais de 10 min para 20 páginas |
-| Coordenadas sob o texto | o Tesseract juntou a fileira "a b c … h" com a linha de baixo; uma palavra mal lida ocupava as duas e o bloco traduzido subia sobre as coordenadas (7 diagramas "alterados" no livro) |
+| Coordenadas sob o texto | o Tesseract juntou a fileira "a b c … h" com a linha de baixo; uma palavra mal lida ocupava as duas e o bloco traduzido subia sobre as coordenadas (7 diagramas "alterados" no livro). A fileira também saiu lida junta ("bede", 4 letras) e passava por palavra |
+| Legenda sobre o tabuleiro | o número do exercício "(3)", encostado na faixa protegida, e a legenda abaixo do tabuleiro viraram um bloco só, que cobria o tabuleiro: a tradução foi escrita por cima dele (p. 58) |
+| Palavras curtas perdidas | na faixa em volta do diagrama, toda palavra de até 3 letras saía, inclusive o fim de linha da coluna vizinha ("can", "As") |
 
 ## Correções
 
@@ -27,7 +29,9 @@ nenhum crédito gasto, nenhum texto do livro no repositório.
   tabuleiros emoldurados do livro passam; uma caixa de texto emoldurada não.
 * **Diagrama inteiro protegido**: tabuleiro, coordenadas, vez de jogar e número
   do exercício (`diagram_area`); linhas e palavras de texto nunca entram nessa
-  área.
+  área. Na faixa, sai só o trecho feito inteiro de marcas e coordenadas; um
+  trecho com palavra de verdade fica inteiro. Um bloco que atravessa um
+  diagrama é partido acima e abaixo dele.
 * **Livro inteiro no PDF**: páginas sem texto vão como no original; a
   auditoria confere que o PDF tem todas as páginas do livro.
 * **Figurinas do livro**: os grupos de desenhos achados no começo dos lances
@@ -50,20 +54,26 @@ nenhum crédito gasto, nenhum texto do livro no repositório.
 |---|---|---|
 | Páginas no PDF traduzido | 299 de 306 | 306 de 306 |
 | Tabuleiros achados | — | 617 |
-| Diagramas alterados na montagem | — | ver abaixo |
-| Lances com ♕ | 0 | 3828 |
+| Diagramas alterados na montagem | 7 (coordenadas e legenda reescritas) | **0 de 617** |
+| Páginas sem pendência na montagem | — | 274 de 306 (as outras: 30 sobreposições, 3 textos que não couberam, 1 corte, 26 blocos com fonte reduzida demais) |
+| Lances com ♕ | 0 | 3829 |
 | Lances começando por "W" | ~1800 | 79 (com aviso) |
-| Segmentos que pedem atenção | 100 % | 31 % (785 de 2560) |
-| Segmentos de lixo de diagrama | 126 de 296 no trecho | 4 no trecho |
+| Segmentos que pedem atenção | 100 % | 32 % (789 de 2469) |
+| Trechos ilegíveis que ficam como na imagem | 126 de 296 no trecho de 20 páginas | 82 no livro inteiro |
 | Montagem de 20 páginas | > 10 min | 35 s |
-| Montagem do livro | — | 8 min |
-| OCR do livro (4 núcleos) | — | 17 min; reler com figurinas: 8 min |
+| Montagem do livro | — | 8 min (refazer depois de uma mudança: as partes iguais são reaproveitadas) |
+| OCR do livro (4 núcleos) | — | 17–18 min; reler com figurinas: 8 min |
+| Auditoria | — | original intacto; notação idêntica em todas as traduções; PDF com todas as páginas |
+
+Sincronizar depois de atualizar o programa (OCR refeito, figurinas confirmadas
+mantidas pelo desenho): 18 min; das 2469 traduções, só os parágrafos cujo texto
+mudou voltaram a pendentes (de 4 a 97, conforme a mudança).
 
 A confirmação das figurinas, feita olhando as imagens dos 40 grupos: 14 damas,
 reis, torres, cavalos e bispos claros; 9 grupos marcados "não é peça" (o "x"
 da captura sozinho, ou peça colada no "x", que pintada como letra apagaria o
 "x").
 
-Os 31 % que ainda pedem atenção são, na maioria, lances que o OCR estragou de
+Os 32 % que ainda pedem atenção são, na maioria, lances que o OCR estragou de
 verdade ("35.♖xaG", "26.♕65!", "♘FB") ou casas lidas com pouca confiança: é
 trabalho de revisão, que agora aparece separado do resto.

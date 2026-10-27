@@ -485,7 +485,16 @@ def diagram_area(board: tuple[float, float, float, float]) -> tuple[float, float
     return (x0 - 0.2 * w, y0 - 0.02 * h, x1 + 0.2 * w, y1 + 0.1 * h)
 
 
-_COORDS_RE = re.compile(r"[(\[|]?[a-hA-H1-8|.,:;]+[)\]|]?")
+# coordenadas como o OCR as lê: "bcdefgih" (o h vira "ih"), "l" e "I" no lugar do 1, um "@" perdido
+_COORD_CHARS = set("abcdefghilI12345678")
+
+
+def _coord_like(text: str) -> bool:
+    """Coordenadas são minúsculas e números: uma maiúscula ("Black") é palavra de verdade."""
+    chars = [c for c in text if not c.isspace() and c not in "()[]|.,:;"]
+    if not chars or any(c.isupper() and c != "I" for c in chars):
+        return False
+    return sum(c in _COORD_CHARS for c in chars) >= 0.75 * len(chars)
 
 
 def _is_diagram_mark(w: OcrWord) -> bool:
@@ -508,13 +517,16 @@ def _text_blocks(hocr: str, boards: list[tuple[float, float, float, float]], sca
         center = pymupdf.Point((w.bbox[0] + w.bbox[2]) / 2, (w.bbox[1] + w.bbox[3]) / 2)
         return any(r.contains(center) for r in rects)
 
+    def touches(rects: list[pymupdf.Rect], w: OcrWord) -> bool:
+        return any(r.intersects(pymupdf.Rect(*w.bbox)) for r in rects)
+
     for block in blocks:
         for line in block.lines:
             kept: list[OcrWord] = []
             for group in _word_groups(line):
                 group = [w for w in group if not inside(board_px, w)]
-                if group and all(inside(area_px, w) for w in group) and all(
-                        _is_diagram_mark(w) or _COORDS_RE.fullmatch(w.text) for w in group):
+                if group and all(touches(area_px, w) for w in group) and all(
+                        _is_diagram_mark(w) or _coord_like(w.text) for w in group):
                     # trecho inteiro na faixa do diagrama, só de coordenadas e marcas (inclusive a
                     # fileira lida junta, "bede" de "b c d e"): é parte do diagrama
                     continue
@@ -523,7 +535,28 @@ def _text_blocks(hocr: str, boards: list[tuple[float, float, float, float]], sca
             if line.words:
                 line.bbox = _clear_of(_union([w.bbox for w in line.words]), area_px)
         block.lines = [ln for ln in block.lines if ln.words]
-    return _split_columns([b for b in blocks if b.lines])
+    return _apart_from_boards(_split_columns([b for b in blocks if b.lines]), area_px)
+
+
+def _apart_from_boards(blocks: list[OcrBlock], areas: list[pymupdf.Rect]) -> list[OcrBlock]:
+    """Bloco que atravessa um diagrama (o número do exercício acima e a legenda abaixo, juntos pelo
+    Tesseract) vira dois: o texto traduzido nunca é escrito por cima do tabuleiro."""
+    out: list[OcrBlock] = []
+    pending = list(blocks)
+    while pending:
+        block = pending.pop(0)
+        area = next((a for a in areas if pymupdf.Rect(*block.bbox).intersects(a)
+                     and any(ln.bbox[3] <= a.y0 + 0.5 * a.height for ln in block.lines)
+                     and any(ln.bbox[1] >= a.y0 + 0.5 * a.height for ln in block.lines)), None)
+        if area is None:
+            out.append(block)
+            continue
+        middle = area.y0 + 0.5 * area.height
+        for part in ([ln for ln in block.lines if (ln.bbox[1] + ln.bbox[3]) / 2 < middle],
+                     [ln for ln in block.lines if (ln.bbox[1] + ln.bbox[3]) / 2 >= middle]):
+            if part:
+                pending.append(OcrBlock(_union([ln.bbox for ln in part]), part))
+    return out
 
 
 def _word_groups(line: OcrLine) -> list[list[OcrWord]]:

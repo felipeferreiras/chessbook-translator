@@ -282,7 +282,7 @@ def _hocr_lines(lines: list[list[tuple[str, tuple[int, int, int, int]]]]) -> str
 
 def test_coordinate_row_read_as_one_word_is_not_text():
     """ "b c d e" lido como "bede" abaixo do tabuleiro: é coordenada, não texto; uma linha de verdade fica."""
-    hocr = _hocr_lines([[("bede", (1290, 700, 1490, 725))],
+    hocr = _hocr_lines([[("bede", (1290, 700, 1390, 725)), ("fgih", (1400, 700, 1460, 725)), ("@h", (1465, 700, 1490, 725))],
                         [("Black", (1100, 715, 1250, 740)), ("had", (1270, 715, 1350, 740)),
                          ("bad", (1370, 715, 1450, 740))]])
     board = (1200 * 72 / 300, 190 * 72 / 300, 1700 * 72 / 300, 680 * 72 / 300)
@@ -293,3 +293,17 @@ def test_coordinate_row_read_as_one_word_is_not_text():
                          ("W", (1110, 300, 1140, 325))]])
     blocks = ocr._text_blocks(hocr, [board], 300 / 72)
     assert [w.text for b in blocks for ln in b.lines for w in ln.words] == ["White", "can"]
+
+
+def test_block_across_a_board_is_split_and_exercise_number_is_a_mark():
+    """O número do exercício "(3)" à esquerda do tabuleiro (encostado na faixa) e a legenda abaixo,
+    juntos num bloco pelo Tesseract: o número sai como marca e o bloco nunca cobre o tabuleiro."""
+    board = (330 * 72 / 300, 280 * 72 / 300, 940 * 72 / 300, 890 * 72 / 300)
+    hocr = _hocr_lines([[("(3)", (160, 280, 245, 390)), ("ag", (280, 350, 360, 420))],
+                        [("Macieja", (290, 980, 450, 1020)), ("Stockholm", (470, 980, 700, 1020))],
+                        [("White", (290, 140, 420, 180)), ("to", (440, 140, 480, 180)), ("play", (500, 140, 600, 180))]])
+    blocks = ocr._text_blocks(hocr, [board], 300 / 72)
+    words = sorted([w.text for ln in b.lines for w in ln.words] for b in blocks)
+    assert words == [["Macieja", "Stockholm"], ["White", "to", "play"]]
+    board_px = pymupdf.Rect(*(v * 300 / 72 for v in board))
+    assert not any(pymupdf.Rect(*b.bbox).intersects(board_px) for b in blocks)
