@@ -46,14 +46,28 @@ que o aplicativo faz para não esconder o problema.
 
 ## Livros digitalizados (OCR)
 
-* 71–84 % dos lances com peça lidos certos; 1–2 % errados **sem** aviso
-  específico — por isso todo parágrafo de OCR pede conferência com a imagem
-  antes da aprovação.
+* 71–84 % dos lances com peça lidos certos no livro de amostra; 1–2 % errados
+  **sem** aviso específico. Por isso todo parágrafo de OCR leva o aviso geral
+  "confira com a imagem", mas só pede atenção quando há um aviso específico
+  sobre lance, casa ou número (no *Grandmaster Preparation*: ~40 % dos
+  parágrafos). Confira os demais pela página inteira e use "Aprovar página".
+* As figurinas de cada livro precisam de confirmação na tela "Figurinas do
+  livro": sem ela, um desenho que se parece com outra peça (a dama do
+  *Grandmaster Preparation* com o rei) fica sem leitura e o lance sai com a
+  letra que o OCR viu ("We4"), com aviso.
+* Lances que o OCR estragou além da correção de leitura única ("♕65!",
+  "♘FB") ficam como lidos, com aviso: a correção é manual, na revisão.
 * A posição dos diagramas digitalizados não é lida (sem FEN): os lances dessas
   páginas não são validados pela legalidade.
-* Negrito, itálico e fonte original se perdem; títulos saem em serifa normal.
-* ~5 s por página, uma vez por livro; as figurinas precisam aparecer ao menos
-  3 vezes iguais para virar protótipo.
+* Itálico e fonte original se perdem; títulos saem em serifa normal.
+* ~5 s por página, uma vez por livro (refeito quando o OCR do programa muda);
+  reler com figurinas confirmadas: ~3 s por página. As figurinas precisam
+  aparecer ao menos 3 vezes iguais para virar protótipo sozinhas; um grupo
+  menor só vale se confirmado.
+* Diagramas são achados pela moldura quadrada com casas alternadas. Um
+  diagrama sem moldura não é achado: o texto lido dele sai como trecho
+  ilegível que "fica como na imagem" (nada é apagado).
+* Negrito dos lances não é recuperado: a tradução sai sem o destaque.
 * Docling avaliado e não adotado (ADR-0007); RapidOCR não testado (modelos em
   `www.modelscope.cn`, bloqueado no ambiente de desenvolvimento).
 

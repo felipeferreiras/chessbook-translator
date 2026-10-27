@@ -226,9 +226,9 @@ def test_user_confirmed_figurine_is_read_in_the_whole_book(tmp_path):
 
 @pytest.mark.parametrize("read, fixed", [
     ("23.♖el", "23.♖e1"), ("16.♖fd]", "16.♖fd1"), ("27...♕xf4t", "27...♕xf4†"), ("4l.fxg5t", "41.fxg5†"),
-    ("24.♕xe4t!", "24.♕xe4†!"), ("31.e4t", "31.e4†"), ("♖dlt", "♖d1†"),
+    ("24.♕xe4t!", "24.♕xe4†!"), ("31.e4t", "31.e4†"), ("♖dlt", "♖d1†"), ("c6t", "c6†"), ("exf4t.", "exf4†."),
     # prosa e lances já certos ficam como estão
-    ("et", "et"), ("al", "al"), ("Bel", "Bel"), ("8.♖e1+", "8.♖e1+"), ("48.gxh4", "48.gxh4"),
+    ("et", "et"), ("al", "al"), ("at", "at"), ("a1", "a1"), ("Bel", "Bel"), ("8.♖e1+", "8.♖e1+"), ("48.gxh4", "48.gxh4"),
 ])
 def test_ocr_misreads_with_a_single_reading_are_fixed(read, fixed):
     assert ocr.fix_move_glyphs(read) == (fixed, read != fixed)
@@ -251,3 +251,45 @@ def test_project_creation_keeps_ocr_files_inside_the_project(tmp_path):
                    capture_output=True)
     assert {p.name for p in (root / "scan").iterdir()} >= {"ocr.json", "ocr-passe1.json.gz"}
     assert sorted(p.name for p in root.iterdir() if p.is_file()) == []
+
+
+def test_text_line_never_reaches_into_the_diagram_coordinates():
+    """O Tesseract juntou a fileira "a b c ... h" com a linha de baixo (uma palavra mal lida pega as duas):
+    a caixa da linha fica só com a linha de texto, fora da área do diagrama."""
+    area = pymupdf.Rect(600, 430, 1470, 1108)
+    words = [(219, 1143, 350, 1177), (805, 1070, 917, 1186), (935, 1156, 1032, 1178), (1749, 1155, 1841, 1186)]
+    assert ocr._clear_of(ocr._union(words), [area]) == (219, 1143, 1841, 1186)
+    # linha acima do diagrama que desce sobre ele
+    assert ocr._clear_of((100, 400, 900, 440), [area])[3] == 429
+
+
+def _hocr_lines(lines: list[list[tuple[str, tuple[int, int, int, int]]]]) -> str:
+    """hOCR mínimo: cada palavra com uma caixa por caractere, como o Tesseract devolve."""
+    out = []
+    for words in lines:
+        x0, y0 = min(b[0] for _, b in words), min(b[1] for _, b in words)
+        x1, y1 = max(b[2] for _, b in words), max(b[3] for _, b in words)
+        spans = []
+        for text, (a, b, c, d) in words:
+            step = (c - a) // len(text)
+            chars = "".join(f"<span class='ocrx_cinfo' title='x_bboxes {a + k * step} {b} {a + (k + 1) * step} {d};"
+                            f" x_conf 95'>{ch}</span>" for k, ch in enumerate(text))
+            spans.append(f"<span class='ocrx_word' title='bbox {a} {b} {c} {d}; x_wconf 92'>{chars}</span>")
+        out.append(f"<span class='ocr_line' title=\"bbox {x0} {y0} {x1} {y1}; x_size 25\">{' '.join(spans)}</span>")
+    return ("<html><body><div class='ocr_page'><div class='ocr_carea' title=\"bbox 0 0 2000 2000\">"
+            "<p class='ocr_par' title=\"bbox 0 0 2000 2000\">" + "".join(out) + "</p></div></div></body></html>")
+
+
+def test_coordinate_row_read_as_one_word_is_not_text():
+    """ "b c d e" lido como "bede" abaixo do tabuleiro: é coordenada, não texto; uma linha de verdade fica."""
+    hocr = _hocr_lines([[("bede", (1290, 700, 1490, 725))],
+                        [("Black", (1100, 715, 1250, 740)), ("had", (1270, 715, 1350, 740)),
+                         ("bad", (1370, 715, 1450, 740))]])
+    board = (1200 * 72 / 300, 190 * 72 / 300, 1700 * 72 / 300, 680 * 72 / 300)
+    blocks = ocr._text_blocks(hocr, [board], 300 / 72)
+    assert [w.text for b in blocks for ln in b.lines for w in ln.words] == ["Black", "had", "bad"]
+    # fim de linha da coluna vizinha dentro da faixa do diagrama fica; a marca "W" isolada, não
+    hocr = _hocr_lines([[("White", (800, 300, 950, 325)), ("can", (970, 300, 1060, 325)),
+                         ("W", (1110, 300, 1140, 325))]])
+    blocks = ocr._text_blocks(hocr, [board], 300 / 72)
+    assert [w.text for b in blocks for ln in b.lines for w in ln.words] == ["White", "can"]

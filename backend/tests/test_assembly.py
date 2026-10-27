@@ -138,3 +138,42 @@ def test_audit_confirms_a_complete_book_and_catches_broken_notation(project):
     store.edit(other.id, other.current.text + " ", "revisor")
     assert audit(store, check_extraction=False)["assembly"]["outdated"]
     assert (store.dir / "output" / "auditoria.json").exists()
+
+
+def test_pages_without_text_stay_in_the_translated_book(tmp_path):
+    """Página só com diagrama, foto ou em branco vai como no original: o livro não perde páginas."""
+    page = pymupdf.open(stream=syn.build_page("fan_unicode").pdf_bytes, filetype="pdf")
+    book = pymupdf.open()
+    book.insert_pdf(page)
+    blank = book.new_page(width=page[0].rect.width, height=page[0].rect.height)
+    blank.draw_rect(pymupdf.Rect(100, 100, 300, 300), color=(0, 0, 0))  # desenho sem texto
+    book.insert_pdf(page)
+    pdf = tmp_path / "livro.pdf"
+    book.save(pdf)
+    notation = collect(pymupdf.open(pdf))
+    store = ProjectStore.create(tmp_path / "storage", "livro", "Livro", pdf, 3, notation.style)
+    segs = book_segments(notation, "Livro")
+    assert {b.page for b in segs} == {1, 3}
+    store.add_book_segments([{"id": b.id, "page": b.page, "section": b.section.label, "source": b.region.resolved.text,
+                              "kind": b.kind, "bold": b.region.main_mask, "italic": b.region.italic_mask,
+                              "blocked": b.blocked} for b in segs])
+    summary = asm.assemble(store.original_path, store.export_result(), store.dir / "output", notation=notation)
+    out = pymupdf.open(store.dir / "output" / "traduzido.pdf")
+    assert out.page_count == 3 and summary["pages"] == [1, 2, 3]
+    assert out[1].get_drawings() and not out[1].get_text().strip()
+
+
+def test_outdated_ocr_asks_for_sync_instead_of_redoing_it(project, monkeypatch):
+    """Depois de atualizar o programa, montar ou auditar não refaz o OCR escondido (dezenas de minutos)."""
+    from app.extraction import ocr
+    from app.store import assembly
+    from app.store.audit import audit
+    from app.store.project_store import StoreError
+
+    store, _ = project
+    (store.dir / "ocr.json").write_text('{"version": "antiga", "pages": {}}')
+    monkeypatch.setattr(ocr, "run_tesseract", lambda *a, **k: pytest.fail("OCR refeito"))
+    with pytest.raises(StoreError, match="Sincronizar"):
+        assembly.start(store, "t")
+    report = audit(store)
+    assert report["extraction"]["ocr_outdated"] and not report["ok"]

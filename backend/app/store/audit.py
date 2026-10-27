@@ -37,7 +37,13 @@ def audit(store: ProjectStore, check_extraction: bool = True) -> dict:
     report["original_ok"] = store.verify_original()
     style = store.style
 
-    if check_extraction:
+    from app.extraction.ocr import cache_is_current
+
+    if check_extraction and not cache_is_current(store.dir / "ocr.json"):
+        # refazer o OCR aqui levaria dezenas de minutos: quem refaz é a sincronização
+        report["extraction"] = {"ok": False, "ocr_outdated": True, "missing_in_project": [], "only_in_project": [],
+                                "source_differs": []}
+    elif check_extraction:
         from app.pipeline.notation_pass import collect
         from app.pipeline.segments import book_segments
 
@@ -94,6 +100,7 @@ def audit(store: ProjectStore, check_extraction: bool = True) -> dict:
             "assembled_at": assembled_at,
             "outdated": summary.get("content_sha256") != content_hash(store.export_result()),
             "pages_assembled": len(summary["pages"]), "pages_in_pdf": pages_pdf,
+            "pages_in_book": int(store.info["pages"]),
             "pages_ok": len(summary["pages_ok"]),
             "blocks": summary["blocks"], "blocks_placed": summary["blocks_placed"],
             **{k: len(summary.get(k, [])) for k in ("missing_text", "cut_text", "missing_notation",
@@ -102,7 +109,7 @@ def audit(store: ProjectStore, check_extraction: bool = True) -> dict:
             "original_unchanged_during_assembly": summary["source_sha256_before"] == summary["source_sha256_after"],
         }
         a = report["assembly"]
-        a["ok"] = (pages_pdf == a["pages_assembled"] and a["blocks_placed"] == a["blocks"]
+        a["ok"] = (pages_pdf == a["pages_assembled"] == a["pages_in_book"] and a["blocks_placed"] == a["blocks"]
                    and a["original_unchanged_during_assembly"]
                    and not any(a[k] for k in ("missing_text", "cut_text", "missing_notation", "leftover_original",
                                               "overlaps", "diagrams_changed")))

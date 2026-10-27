@@ -673,7 +673,9 @@ class ProjectStore:
                     "warnings": json.loads(v["warnings_json"]) if v else [],
                     "approved": bool(row["approved"]),
                 })
-        pages = sorted({s["page"] for s in segments})
+        # o livro inteiro: páginas sem texto (só diagramas, fotos, em branco) vão como no original,
+        # senão o PDF traduzido perderia páginas e a numeração deslocaria
+        pages = sorted({s["page"] for s in segments} | set(range(1, int(self.info["pages"]) + 1)))
         return {"summary": {"pages": pages, "project": self.id}, "segments": segments}
 
 

@@ -76,7 +76,7 @@ controle de versão). Tradução em paralelo: `CHESSBOOK_TRANSLATION_WORKERS`
 ```bash
 cd backend
 uv pip install --python .venv/bin/python -e ".[dev]"
-.venv/bin/python -m pytest -q        # 308 testes
+.venv/bin/python -m pytest -q        # 332 testes
 .venv/bin/ruff check app tests scripts
 cd ../frontend && npm run build      # tsc + vite
 ```
@@ -88,7 +88,7 @@ real entra no repositório.
 
 * [Manual](docs/manual.md) · [Limitações conhecidas](docs/limitacoes.md) · [Segurança](docs/quality/seguranca.md)
 * `docs/plano-execucao.md`: as fases e o que cada uma entregou
-* `docs/research/`: investigação e relatórios de cada fase (01–14)
+* `docs/research/`: investigação e relatórios de cada fase (01–15; 15 = livro digitalizado real)
 * `docs/architecture/`: arquitetura e tradução
 * `docs/decisions/`: ADRs 0001–0007
 * `docs/quality/`: critérios de aceitação, plano de testes, definição da POC

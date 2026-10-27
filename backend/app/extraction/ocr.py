@@ -485,6 +485,9 @@ def diagram_area(board: tuple[float, float, float, float]) -> tuple[float, float
     return (x0 - 0.2 * w, y0 - 0.02 * h, x1 + 0.2 * w, y1 + 0.1 * h)
 
 
+_COORDS_RE = re.compile(r"[(\[|]?[a-hA-H1-8|.,:;]+[)\]|]?")
+
+
 def _is_diagram_mark(w: OcrWord) -> bool:
     """Coordenada, marca de vez ou número de exercício: curto, ou ilegível."""
     return len(w.text.strip("()[]{}.,")) <= 3 or w.conf < MIN_WORD_CONF
@@ -507,10 +510,55 @@ def _text_blocks(hocr: str, boards: list[tuple[float, float, float, float]], sca
 
     for block in blocks:
         for line in block.lines:
-            line.words = [w for w in line.words
-                          if not inside(board_px, w) and not (inside(area_px, w) and _is_diagram_mark(w))]
+            kept: list[OcrWord] = []
+            for group in _word_groups(line):
+                group = [w for w in group if not inside(board_px, w)]
+                if group and all(inside(area_px, w) for w in group) and all(
+                        _is_diagram_mark(w) or _COORDS_RE.fullmatch(w.text) for w in group):
+                    # trecho inteiro na faixa do diagrama, só de coordenadas e marcas (inclusive a
+                    # fileira lida junta, "bede" de "b c d e"): é parte do diagrama
+                    continue
+                kept.extend(group)  # com uma palavra de verdade, fica inteiro ("can", "As" no fim da linha)
+            line.words = kept
+            if line.words:
+                line.bbox = _clear_of(_union([w.bbox for w in line.words]), area_px)
         block.lines = [ln for ln in block.lines if ln.words]
     return _split_columns([b for b in blocks if b.lines])
+
+
+def _word_groups(line: OcrLine) -> list[list[OcrWord]]:
+    """Palavras da linha separadas pelos vãos grandes (o mesmo critério de ``_split_columns``)."""
+    groups: list[list[OcrWord]] = []
+    for w in line.words:
+        if groups and w.bbox[0] - groups[-1][-1].bbox[2] <= 1.2 * max(1.0, line.size_px):
+            groups[-1].append(w)
+        else:
+            groups.append([w])
+    return groups
+
+
+def _union(boxes: list[tuple[int, int, int, int]]) -> tuple[int, int, int, int]:
+    """Caixa da linha pelas palavras; a altura, só pelas de altura normal (uma palavra mal lida
+    que pega a linha de cima não estica a linha)."""
+    heights = sorted(b[3] - b[1] for b in boxes)
+    normal = [b for b in boxes if b[3] - b[1] <= 1.5 * heights[len(heights) // 2]] or boxes
+    return (min(b[0] for b in boxes), min(b[1] for b in normal), max(b[2] for b in boxes), max(b[3] for b in normal))
+
+
+def _clear_of(bbox: tuple[int, int, int, int], areas: list[pymupdf.Rect]) -> tuple[int, int, int, int]:
+    """A linha não entra na área de um diagrama: o Tesseract às vezes junta a fileira de coordenadas
+    com a linha de texto logo abaixo (uma palavra mal lida ocupa as duas), e a montagem apagaria as
+    coordenadas ao reescrever a linha."""
+    x0, y0, x1, y1 = bbox
+    for a in areas:
+        if x1 <= a.x0 or x0 >= a.x1 or y1 <= a.y0 or y0 >= a.y1:
+            continue
+        center = (y0 + y1) / 2
+        if center >= a.y1:  # linha abaixo do diagrama
+            y0 = max(y0, int(a.y1) + 1)
+        elif center <= a.y0:  # linha acima
+            y1 = min(y1, int(a.y0) - 1)
+    return x0, y0, x1, y1
 
 
 _PREFIX_RE = re.compile(r"^[(\[]?\d{1,3}\s?\.{0,3}")
@@ -568,10 +616,11 @@ def fix_move_glyphs(text: str) -> tuple[str, bool]:
     """Trocas do OCR que num lance só têm uma leitura: "♖el" é "♖e1" (não há casa "el"),
     "4l.fxg5" é "41.fxg5", e o "t" colado no fim do lance é o "†" (xeque) do livro.
 
-    Só em lances com figurina ou com número de lance: "et" e "al" da prosa ficam como estão.
+    Só em lances com figurina, com número de lance ou de peão: "et" e "al" da prosa ficam como estão.
     """
     out = _FIX_NUMBER_RE.sub(lambda m: m.group(1) + "1" + m.group(2), text)
-    if any(ch in WHITE_FIGURINES for ch in out) or re.match(r"^\(?\d{1,3}\.", out):
+    # lance de peão ("c6t", "exf4t"): letra de coluna, casa e "t" não formam palavra
+    if any(ch in WHITE_FIGURINES for ch in out) or re.match(r"^\(?\d{1,3}\.|^[a-h](?:x[a-h])?[1-8]t", out):
         out = _FIX_ONE_RE.sub(r"\g<1>1", out)
         out = _FIX_CHECK_RE.sub(r"\g<1>†", out)
     return out, out != text
@@ -793,7 +842,10 @@ def read_page(page: pymupdf.Page, scan: PageScan, protos: list[Prototype], lang:
                 if conf < MIN_WORD_CONF:
                     stats["low"] += 1
                     notes.append(f"ocr_baixa_confianca: '{text}' ({conf:.0f})")
-                words.append((text, pymupdf.Rect(*(v / scan.scale for v in w.bbox))))
+                # a caixa da palavra dentro da linha: uma palavra mal lida que pega a linha de cima
+                # (a fileira de coordenadas do diagrama) não estica o bloco sobre ela
+                wb = (w.bbox[0], max(w.bbox[1], line.bbox[1]), w.bbox[2], min(w.bbox[3], line.bbox[3]))
+                words.append((text, pymupdf.Rect(*(v / scan.scale for v in wb))))
             # x_size do Tesseract × 1,07 = corpo da fonte (medido: 9,4 pt lidos para corpo 10 no livro de amostra)
             size = max(4.0, (line.size_px or (line.bbox[3] - line.bbox[1])) / scan.scale * 1.07)
             lrect = pymupdf.Rect(*(v / scan.scale for v in line.bbox))
@@ -829,6 +881,20 @@ def version(lang: str = "eng") -> str:
     except (OSError, subprocess.SubprocessError):
         h.update(b"sem-tesseract")
     return h.hexdigest()[:16]
+
+
+def cache_is_current(cache, lang: str = "eng") -> bool:
+    """O OCR guardado foi feito por esta versão do programa (senão, usá-lo refaria o OCR do livro todo)."""
+    import json
+    from pathlib import Path
+
+    path = Path(cache)
+    if not path.exists():
+        return True
+    try:
+        return json.loads(path.read_text(encoding="utf-8")).get("version") == version(lang)
+    except ValueError:
+        return False
 
 
 def scanned_pages(doc: pymupdf.Document) -> list[int]:

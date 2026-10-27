@@ -91,6 +91,11 @@ def start(store: ProjectStore, author: str, wait: bool = False) -> Assembly:
     """Exporta o texto atual e monta o PDF em outro processo."""
     if not store.verify_original():
         raise StoreError("o original do projeto não confere com o sha256 registrado")
+    from app.extraction.ocr import cache_is_current
+
+    if not cache_is_current(store.dir / "ocr.json"):
+        raise StoreError("o OCR do livro foi feito por uma versão anterior do programa: "
+                         "Projeto → Sincronizar com a versão atual antes de montar")
     with _guard:
         current = latest(store)
         if current is not None and current.state == "running":

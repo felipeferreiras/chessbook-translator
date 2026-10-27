@@ -190,7 +190,7 @@ export interface Audit {
   ok: boolean;
   complete: boolean;
   original_ok: boolean;
-  extraction?: { ok: boolean; segments_project: number; segments_extraction: number; missing_in_project: string[];
+  extraction?: { ok: boolean; ocr_outdated?: boolean; segments_project: number; segments_extraction: number; missing_in_project: string[];
                  only_in_project: string[]; source_differs: string[] };
   segments: { total: number; by_state: Record<string, number>; unfinished: string[]; unfinished_count: number;
               notation_broken: { id: string; problems: string[] }[]; markers_left: string[] };

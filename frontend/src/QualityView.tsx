@@ -111,7 +111,9 @@ function AuditPanel(props: { projectId: string }) {
       {a && (
         <ul className="audit">
           {check(a.original_ok, "original intacto (sha256)")}
-          {a.extraction && check(a.extraction.ok, `segmentos batem com a extração atual (${a.extraction.segments_project})`)}
+          {a.extraction && (a.extraction.ocr_outdated
+            ? check(false, "OCR feito por uma versão anterior do programa: Projeto → Sincronizar com a versão atual")
+            : check(a.extraction.ok, `segmentos batem com a extração atual (${a.extraction.segments_project})`))}
           {check(a.segments.notation_broken.length === 0,
                  `notação idêntica à origem em todas as versões${a.segments.notation_broken.length
                    ? `: ${a.segments.notation_broken.map((x) => x.id).join(", ")}` : ""}`)}
