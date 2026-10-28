@@ -203,7 +203,7 @@ def test_resolve_linares_spans_and_keep_origin():
     r = resolve_spans(spans)
     assert r.text == "1 ♔d4? ♔e6!⊙ thus 9 ♔d6+−"
     assert r.raw[r.origin[r.text.index("+−")]] == "i"
-    assert r.proposed_only and not r.unmapped
+    assert not r.proposed_only and not r.unmapped  # perfil Linares confirmado pelo usuário
 
 
 def test_unmapped_glyph_is_reported_not_guessed():
@@ -216,3 +216,102 @@ def test_embedded_font_probe_identifies_figurine_drawn_by_letter():
     xref = next(f[0] for f in doc[0].get_fonts(full=True) if "ChessFigurineTest" in f[3])
     obs = {o.char: o for o in probe_embedded_font(doc, xref)}
     assert obs["N"].best == "♘" and obs["N"].score > 0.9
+
+
+def test_piece_route_is_notation_but_not_a_move():
+    text = "White must take measures against ...♔e2-d2-c2−+ in time."
+    kinds = [(a.kind, a.text) for a in lex(text, BOOK).atoms]
+    assert (AtomKind.ROUTE, "♔e2-d2-c2−+") in kinds
+    r = run(text, "8/8/8/8/8/8/4k3/K7 b - - 0 1")
+    assert r.moves == []
+    from app.translation.guard import protect
+    assert "♔" not in protect(text, BOOK).masked
+
+
+ABBREV = LexStyle(numbers_without_dot=True, abbreviated_pawn_captures=True)
+
+
+def _abbreviated(text: str) -> list[str]:
+    return [a.text.rstrip("?!") for a in lex(text, ABBREV).atoms if a.move and a.move.to_file is not None]
+
+
+def test_abbreviated_capture_needs_notation_right_before_it():
+    """Em português "de" é preposição: "em vista de 1...♔a7" não tem captura d×e."""
+    assert _abbreviated("é um erro, em vista de 1...♔a7! e as brancas") == []
+    assert _abbreviated("Depois de 21 ♔f1 ♔f3 o rei marcha") == []
+    assert _abbreviated("3 ♔f1 d5 4 ed e4 5 d6") == ["ed"]
+    assert _abbreviated("9 ♔g6 hg 10 ♔×g7") == ["hg"]
+    assert _abbreviated("8...♖a5+! (8...hg? 9 ♔g6)") == ["hg"]
+
+
+def test_prose_parenthesis_with_de_is_not_notation():
+    kinds = [a.kind for a in lex("13 ♘f4 (conhecemos esta posição de empate) 13...♔c3!?", ABBREV).atoms]
+    assert AtomKind.PAREN_OPEN not in kinds and AtomKind.VAR_OPEN not in kinds
+    assert _abbreviated("(hg 9 ♔g6)") == ["hg"]
+
+
+def _rows(boards: int, top: float = 100, frame: str = "!$$$$$$$$#") -> list:
+    rows, y = [], top
+    for _ in range(boards):
+        rows.append((frame, pymupdf.Rect(80, y, 230, y + 12)))
+        y += 12
+        for _ in range(8):
+            rows.append(("{" + "+" * 8 + "}", pymupdf.Rect(80, y, 230, y + 18)))
+            y += 18
+        rows.append((frame, pymupdf.Rect(80, y, 230, y + 12)))
+        y += 20
+    return rows
+
+
+def test_stacked_boards_in_one_block_are_split():
+    from app.pipeline.notation_pass import _split_boards
+
+    boards = _split_boards(_rows(2))
+    assert len(boards) == 2
+    assert all(sum(1 for line in lines if line.startswith("{")) == 8 for lines, _ in boards)
+    assert boards[0][1].y1 < boards[1][1].y0
+
+
+def test_frame_strip_is_merged_into_the_board_below():
+    from app.chess.diagrams.font_diagram import DiagramReading
+    from app.pipeline.notation_pass import Diagram, _merge_board_strips
+
+    strip = Diagram(5, (69, 480, 226, 505), DiagramReading(None, ["esperadas 8 fileiras, encontradas 0"]))
+    board = Diagram(5, (76, 505, 226, 640), DiagramReading("8/8/8/8/8/8/8/K6k"))
+    other_page = Diagram(6, (69, 480, 226, 505), DiagramReading(None, ["esperadas 8 fileiras, encontradas 0"]))
+    diagrams = [strip, board, other_page]
+    _merge_board_strips(diagrams, 5)
+    assert diagrams == [board, other_page] and board.bbox == (69, 480, 226, 640)
+
+
+def test_text_above_and_below_a_board_becomes_separate_parts():
+    from app.pipeline.notation_pass import _split_around_board
+
+    def line(y0, y1, text):
+        return {"bbox": (50, y0, 250, y1), "spans": [{"text": text, "bbox": (50, y0, 250, y1)}]}
+    block = {"bbox": (50, 240, 250, 470), "lines": [line(240, 250, "Caption"), line(300, 310, "rank"),
+                                                    line(410, 420, "Paragraph below")]}
+    parts = _split_around_board(block, pymupdf.Rect(76, 256, 226, 406))
+    assert [[ln["spans"][0]["text"] for ln in p["lines"]] for p in parts] == [["Caption"], ["rank"],
+                                                                             ["Paragraph below"]]
+    assert parts[2]["bbox"][1] == 410
+
+
+def test_moves_drawn_as_vector_outlines_block_the_paragraph():
+    """Lances convertidos em curvas não aparecem no texto: o parágrafo não pode ir ao tradutor."""
+    from app.pipeline.notation_pass import collect
+    from app.pipeline.segments import book_segments
+
+    doc = pymupdf.open()
+    page = doc.new_page(width=300, height=200)
+    page.insert_textbox(pymupdf.Rect(20, 80, 280, 120), "Conclusion: after the move Black must play.", fontsize=10)
+    page.insert_text((20, 40), "Plain paragraph without drawings at all.", fontsize=10)
+    for x in (95, 104, 113):  # três "glifos" desenhados como contornos pretos
+        shape = page.new_shape()
+        shape.draw_polyline([(x, 92), (x + 6, 92), (x + 7, 86), (x + 3, 84), (x, 88), (x, 92)])
+        shape.finish(fill=(0, 0, 0), color=None)
+        shape.commit()
+    segs = book_segments(collect(doc))
+    blocked = [s for s in segs if s.blocked]
+    assert len(blocked) == 1 and blocked[0].region.vector_glyphs == 3
+    assert "Conclusion" in blocked[0].region.resolved.text

@@ -54,7 +54,8 @@ _LINARES_EVIDENCE = (
     "Leitura visual de cada glifo isolado da fonte incorporada (folha de contato), "
     "Dvoretsky's Endgame Manual (Russell Enterprises, 2020), 2026-10-22. "
     "Comparação automática com fontes livres foi inconclusiva para K e B. "
-    "Glifos conferidos também renderizados isoladamente a partir da fonte incorporada."
+    "Glifos conferidos também renderizados isoladamente a partir da fonte incorporada. "
+    "Mapa confirmado pelo usuário em 2026-10-22 (folha de confirmação)."
 )
 
 LINARES_FIGURINE = FontProfile(
@@ -67,7 +68,7 @@ LINARES_FIGURINE = FontProfile(
         "q": "∞", "m": "⇆", "*": "⊙", "$": "△", "~": "□",
     },
     identity="abcdefgh0123456789O+-=!?#.:()  ",
-    status=ProfileStatus.PROPOSED,
+    status=ProfileStatus.CONFIRMED,
     evidence=_LINARES_EVIDENCE,
 )
 
@@ -93,7 +94,7 @@ LINARES_DIAGRAM = FontProfile(
     role=FontRole.DIAGRAM,
     char_map={},
     identity="",
-    status=ProfileStatus.PROPOSED,
+    status=ProfileStatus.CONFIRMED,
     evidence=_LINARES_EVIDENCE,
 )
 

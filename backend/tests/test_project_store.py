@@ -1,0 +1,300 @@
+"""Projeto em SQLite: original imutável, versões, histórico, edição protegida."""
+
+import os
+
+import pytest
+
+from app.store.project_store import GuardViolation, ProjectStore, StoreError
+from app.translation.glossary import GlossaryEntry
+from app.translation.guard import protect
+from tests.fixtures import synthetic as syn
+
+SOURCE = "After 1.e4 e5 2.Nf3 the deflection on b5 wins."
+MASKED_PT = "Depois de ⟦1⟧ o desvio em b5 vence."
+
+
+def _result():
+    p = protect(SOURCE)
+    assert p.masked == "After ⟦1⟧ the deflection on b5 wins."
+    return {"segments": [
+        {"id": "p1-0", "page": 1, "section": "Chapter 1", "source": SOURCE, "status": "translated",
+         "text": "Depois de 1.e4 e5 2.Nf3 o desvio em b5 vence.", "raw_translation": MASKED_PT,
+         "warnings": [], "provider": "fake", "model": "m"},
+        {"id": "p1-1", "page": 1, "section": "Chapter 1", "source": "1.e4 e5", "status": "not_needed",
+         "text": "1.e4 e5", "raw_translation": None},
+        {"id": "p2-2", "page": 2, "section": "Chapter 1", "source": "White wins.", "status": "needs_review",
+         "text": None, "raw_translation": "x", "problems": ["marcador ausente"]},
+    ]}
+
+
+@pytest.fixture
+def store(tmp_path):
+    pdf = tmp_path / "livro.pdf"
+    pdf.write_bytes(syn.build_page("fan_unicode").pdf_bytes)
+    s = ProjectStore.create(tmp_path / "storage", "amostra", "Amostra", pdf, pages=1)
+    s.import_translation(_result())
+    return s
+
+
+def test_original_is_a_read_only_verified_copy(store, tmp_path):
+    assert store.verify_original()
+    assert not os.access(store.original_path, os.W_OK) or os.geteuid() == 0  # root ignora permissões
+    assert oct(store.original_path.stat().st_mode & 0o777) == "0o440"
+    with pytest.raises(StoreError):
+        ProjectStore.create(tmp_path / "storage", "amostra", "x", tmp_path / "livro.pdf", 1)
+
+
+def test_import_keeps_machine_version_and_states(store):
+    segs = {s.id: s for s in store.segments()}
+    assert segs["p1-0"].current.kind == "machine" and segs["p1-0"].current.version == 1
+    assert segs["p1-1"].current is None and segs["p1-1"].status == "not_needed"
+    assert segs["p2-2"].needs_attention and segs["p2-2"].machine_problems == ["marcador ausente"]
+    assert store.pages() == [
+        {"page": 1, "segments": 2, "approved": 0, "translated": 1, "notation_only": 1},
+        {"page": 2, "segments": 1, "approved": 0, "translated": 0, "notation_only": 0}]
+    assert store.import_translation(_result()) == 0  # reimportar não duplica
+
+
+def test_edit_is_versioned_and_logged(store):
+    v = store.edit("p1-0", "Após 1.e4 e5 2.Nf3, o desvio em b5 vence.", "revisor")
+    assert v.version == 2 and v.kind == "edit" and v.author == "revisor"
+    log = store.revisions("segment", "p1-0")
+    assert log[-1]["kind"] == "edit" and log[-1]["old_value"].startswith("Depois de")
+    assert [h.kind for h in store.history("p1-0")] == ["machine", "edit"]
+
+
+def test_edit_that_changes_notation_or_squares_is_refused(store):
+    with pytest.raises(GuardViolation, match="alterado ou removido"):
+        store.edit("p1-0", "Após 1.e4 e6 2.Nf3, o desvio em b5 vence.", "revisor")
+    with pytest.raises(GuardViolation, match="casas"):
+        store.edit("p1-0", "Após 1.e4 e5 2.Nf3, o desvio em b4 vence.", "revisor")
+    assert len(store.history("p1-0")) == 1  # nada foi gravado
+
+
+def test_revert_creates_a_new_version_and_approval_resets_on_change(store):
+    store.edit("p1-0", "Após 1.e4 e5 2.Nf3, o desvio em b5 vence.", "revisor")
+    store.approve("p1-0", "revisor")
+    assert store.segment("p1-0").approved
+    v = store.revert("p1-0", 1, "revisor")
+    assert v.version == 3 and v.kind == "revert" and v.text.startswith("Depois de")
+    assert not store.segment("p1-0").approved  # mudou o texto: precisa de nova aprovação
+    with pytest.raises(StoreError):
+        store.approve("p1-1", "revisor")  # sem tradução
+
+
+def test_project_glossary_is_used_in_edit_checks_and_logged(store):
+    store.set_glossary_entry(GlossaryEntry("deflection", "desvio", avoid=["atração"]), "revisor")
+    v = store.edit("p1-0", "Após 1.e4 e5 2.Nf3, a atração em b5 vence.", "revisor")
+    assert any(w.startswith("glossario_evitar:") for w in v.warnings)
+    assert store.segment("p1-0").needs_attention
+    assert store.revisions("glossary")[-1]["entity_id"] == "deflection"
+
+
+def test_export_feeds_the_pdf_assembly(store):
+    store.edit("p1-0", "Após 1.e4 e5 2.Nf3, o desvio em b5 vence.", "revisor")
+    out = {s["id"]: s for s in store.export_result()["segments"]}
+    assert out["p1-0"]["status"] == "reviewed"
+    assert out["p1-0"]["raw_translation"] == "Após ⟦1⟧, o desvio em b5 vence."
+    assert out["p1-1"]["status"] == "not_needed" and out["p1-1"]["text"] == "1.e4 e5"
+    assert out["p2-2"]["status"] == "needs_review" and out["p2-2"]["text"] is None
+
+
+def test_book_segments_start_pending_and_machine_never_overwrites_human(store):
+    assert store.add_book_segments([{"id": "p3-0", "page": 3, "section": "Cap. 2", "source": "Black wins."}]) == 1
+    assert [sid for _, s in store.sources({3}) for sid in [s.id]] == ["p3-0"]
+    assert store.sources({1}) == []  # p1-0 já traduzido, p1-1 só notação
+    store.edit("p1-0", "Após 1.e4 e5 2.Nf3, o desvio em b5 vence.", "revisor")
+    with store._db() as db:
+        outcome = store.record_machine(db, {"id": "p1-0", "status": "translated", "text": "Outra 1.e4 e5 2.Nf3 b5.",
+                                            "raw_translation": "Outra ⟦1⟧ b5."})
+    assert outcome == "kept_human" and store.segment("p1-0").current.kind == "edit"
+
+
+def test_blocked_segment_is_never_sent_and_asks_for_attention(store):
+    reason = "5 glifos desenhados como vetor (lances sem texto extraível): o bloco fica no original para revisão"
+    store.add_book_segments([{"id": "p4-0", "page": 4, "section": "Cap. 3", "source": "After the drawn moves Black wins.",
+                              "blocked": reason}])
+    seg = store.segment("p4-0")
+    assert seg.status == "blocked" and seg.needs_attention and seg.machine_problems == [reason]
+    assert store.sources({4}) == []
+
+
+def test_ocr_attention_only_for_specific_warnings_on_notation(store):
+    from app.pipeline.notation_pass import OCR_FLAG
+    from app.pipeline.segments import OCR_SHORT_MARK
+
+    store.add_book_segments([
+        {"id": "p5-0", "page": 5, "section": "C", "source": "White plays on.", "flags": [OCR_FLAG]},
+        {"id": "p5-1", "page": 5, "section": "C", "source": "Morales wins.",
+         "flags": [OCR_FLAG, "ocr_baixa_confianca: 'Morales' (40)", "ocr_corrigido: '♖el' → '♖e1'"]},
+        {"id": "p5-2", "page": 5, "section": "C", "source": "Then 23.♕e4 wins.",
+         "flags": [OCR_FLAG, "ocr_peca_incerta: '23.♕e4'"]},
+        {"id": "p5-3", "page": 5, "section": "C", "source": "7 x Yi,", "flags": [OCR_FLAG],
+         "blocked": f"{OCR_SHORT_MARK} (rótulo ou marca); fica como na imagem"},
+        {"id": "p5-4", "page": 5, "section": "C", "source": "|\tk kaw w& WW",
+         "blocked": "ocr: a maior parte do texto foi lida sem confiança (provavelmente não é texto); fica como na imagem"},
+    ])
+    segs = {s.id: s for s in store.segments(5)}
+    # o aviso geral e a prosa duvidosa não pedem atenção; o lance duvidoso e o bloco ilegível longo pedem
+    assert [sid for sid, s in segs.items() if s.needs_attention] == ["p5-2", "p5-4"]
+    assert segs["p5-3"].kept_as_image and segs["p5-4"].kept_as_image
+    store.approve("p5-4", "revisor")  # conferido: fica como na imagem, sem tradução
+    assert not store.segment("p5-4").needs_attention
+    with pytest.raises(StoreError):
+        store.approve("p5-2", "revisor")  # sem tradução ainda
+
+
+def test_approve_page_skips_refusals_and_untranslated(store):
+    store.add_book_segments([{"id": "p2-5", "page": 2, "section": "C", "source": "Black resigns."}])
+    store.edit("p2-2", "As brancas vencem.", "revisor")
+    with store._db() as db:
+        db.execute("UPDATE segment SET status='needs_review' WHERE id='p2-2'")
+    r = store.approve_page(1, "revisor")
+    assert r == {"approved": ["p1-0"], "skipped": []}  # p1-1 é só notação
+    assert store.segment("p1-0").approved
+    r = store.approve_page(2, "revisor")
+    assert r["approved"] == [] and set(r["skipped"]) == {"p2-2", "p2-5"}
+    assert store.approve_page(1, "revisor") == {"approved": [], "skipped": []}
+
+
+@pytest.fixture
+def bare(tmp_path):
+    pdf = tmp_path / "livro.pdf"
+    pdf.write_bytes(syn.build_page("fan_unicode").pdf_bytes)
+    return ProjectStore.create(tmp_path / "storage", "vazio", "Vazio", pdf, pages=1)
+
+
+def test_sync_with_a_new_extraction_keeps_translations_and_history(bare):
+    """Código novo dividiu um parágrafo em dois: as traduções acompanham o texto, não o id."""
+    bare.add_book_segments([
+        {"id": "p1-0", "page": 1, "source": "White wins after the pin."},
+        {"id": "p1-1", "page": 1, "source": "Black resigned."},
+        {"id": "p1-2", "page": 1, "source": "A forgotten caption."},
+        {"id": "p1-3", "page": 1, "source": "An old note."},
+    ])
+    with bare._db() as db:
+        for sid, text in (("p1-1", "As pretas abandonaram."), ("p1-3", "Uma nota antiga.")):
+            bare.record_machine(db, {"id": sid, "status": "translated", "text": text,
+                                      "raw_translation": text, "warnings": []})
+    bare.edit("p1-1", "As pretas abandonaram a partida.", "revisor")
+    report = bare.sync_segments([
+        {"id": "p1-0", "page": 1, "source": "White wins after the pin."},
+        {"id": "p1-1", "page": 1, "source": "A new heading."},           # novo, entra no lugar do id antigo
+        {"id": "p1-2", "page": 1, "source": "Black resigned."},          # o traduzido mudou de posição
+        {"id": "p1-3", "page": 1, "source": "1.e4 e5"},                   # só notação
+    ], "teste")
+    assert report == {"kept": 2, "renamed": 1, "added": 2, "removed": 1, "obsolete": 1, "retranslate": 0}
+    moved = bare.segment("p1-2")
+    assert moved.current.text == "As pretas abandonaram a partida." and len(bare.history("p1-2")) == 2
+    assert any(r["entity_id"] == "p1-2" and r["kind"] == "edit" for r in bare.revisions("segment"))
+    assert [s.id for s in bare.segments()] == ["p1-0", "p1-1", "p1-2", "p1-3"]
+    assert bare.segment("p1-1").status == "pending" and bare.segment("p1-3").status == "not_needed"
+    # "An old note." tinha tradução: fica guardado como obsoleto, fora da tradução e da montagem
+    assert all(s["id"] != "p1-3" or s["source"] == "1.e4 e5" for s in bare.export_result()["segments"])
+    with bare._db() as db:
+        assert db.execute("SELECT COUNT(*) FROM segment WHERE status='obsolete'").fetchone()[0] == 1
+    assert {s.id for _, s in bare.sources({1})} == {"p1-0", "p1-1"}
+
+
+def test_sync_keeps_a_refused_translation_flagged(bare):
+    bare.add_book_segments([{"id": "p1-0", "page": 1, "source": "White wins after the pin."}])
+    with bare._db() as db:
+        bare.record_machine(db, {"id": "p1-0", "status": "needs_review", "text": None, "raw_translation": "x",
+                                 "problems": ["números divergem"]})
+    bare.sync_segments([{"id": "p1-0", "page": 1, "source": "White wins after the pin."}], "teste")
+    seg = bare.segment("p1-0")
+    assert seg.status == "needs_review" and seg.machine_problems == ["números divergem"] and seg.needs_attention
+
+
+def test_sync_resets_translation_when_the_protected_text_changes(bare):
+    bare.add_book_segments([{"id": "p1-0", "page": 1, "source": "Play 1.e4 now.", "bold": [False] * 14}])
+    with bare._db() as db:
+        bare.record_machine(db, {"id": "p1-0", "status": "translated", "text": "Jogue 1.e4 agora.",
+                                  "raw_translation": "Jogue ⟦0⟧ agora.", "warnings": []})
+    italic = [True] * 4 + [False] * 10  # agora "Play" vem em itálico: a prosa protegida muda
+    report = bare.sync_segments([{"id": "p1-0", "page": 1, "source": "Play 1.e4 now.", "italic": italic}], "teste")
+    assert report["retranslate"] == 1
+    seg = bare.segment("p1-0")
+    assert seg.current is None and seg.status == "pending" and len(bare.history("p1-0")) == 1
+
+
+def test_ocr_source_can_be_corrected_before_translation_and_survives_sync(bare):
+    """O original lido por OCR ("Wc4") é corrigido ("♕c4†") antes de traduzir; a sincronização casa
+    pelo texto lido e mantém a correção; a exportação leva os dois (montagem e tradução)."""
+    from app.pipeline.notation_pass import OCR_FLAG
+
+    read = "After 22...Wc4 Black wins."
+    bare.add_book_segments([{"id": "p1-0", "page": 1, "source": read, "flags": [OCR_FLAG]},
+                            {"id": "p1-1", "page": 1, "source": "Digital text."}])
+    with pytest.raises(StoreError):
+        bare.edit_source("p1-1", "Digital text!", "revisor")  # não é OCR
+    seg = bare.edit_source("p1-0", "After 22...♕c4† Black wins.", "revisor")
+    assert seg.source == "After 22...♕c4† Black wins." and seg.source_extracted == read and seg.status == "pending"
+    # tradução automática sobre o original corrigido; corrigir de novo a devolve a pendente
+    with bare._db() as db:
+        bare.record_machine(db, {"id": "p1-0", "status": "translated", "text": "Depois de 22...♕c4† as pretas vencem.",
+                                 "raw_translation": "Depois de ⟦1⟧ as pretas vencem."})
+    assert bare.segment("p1-0").current is not None
+    seg = bare.edit_source("p1-0", "After 22...♕c4†! Black wins.", "revisor")
+    assert seg.current is None and seg.status == "pending" and len(bare.history("p1-0")) == 1
+    # revisão humana fica, mas pede conferência
+    with bare._db() as db:
+        bare.record_machine(db, {"id": "p1-0", "status": "translated", "text": "Depois de 22...♕c4†! as pretas vencem.",
+                                 "raw_translation": "Depois de ⟦1⟧ as pretas vencem."})
+    bare.edit("p1-0", "Após 22...♕c4†! as pretas vencem.", "revisor")
+    seg = bare.edit_source("p1-0", "After 22...♕c4†!! Black wins.", "revisor")
+    assert seg.status == "needs_review" and seg.current.kind == "edit" and seg.needs_attention
+
+    report = bare.sync_segments([{"id": "p1-0", "page": 1, "source": read, "flags": [OCR_FLAG]},
+                                 {"id": "p1-1", "page": 1, "source": "Digital text."}], "teste")
+    assert report["kept"] == 2 and report["added"] == 0
+    assert bare.segment("p1-0").source == "After 22...♕c4†!! Black wins."
+    exported = next(s for s in bare.export_result()["segments"] if s["id"] == "p1-0")
+    assert exported["source"] == read and exported["source_text"] == "After 22...♕c4†!! Black wins."
+    # voltar ao texto lido desfaz a correção
+    assert bare.edit_source("p1-0", read, "revisor").source_extracted is None
+
+
+def test_ocr_junk_can_be_discarded_and_stays_out_after_sync(bare):
+    """"|v" lido num espaço em branco: descartado, sai da tradução e da conferência; a página fica
+    como a imagem ali; a decisão sobrevive à sincronização e pode ser desfeita."""
+    from app.pipeline.notation_pass import OCR_FLAG
+
+    segs = [{"id": "p1-0", "page": 1, "source": "White wins the queen.", "flags": [OCR_FLAG]},
+            {"id": "p1-1", "page": 1, "source": "iii Wy kaw", "flags": [OCR_FLAG]},
+            {"id": "p1-2", "page": 1, "source": "Digital text."}]
+    bare.add_book_segments(segs)
+    with pytest.raises(StoreError):
+        bare.discard("p1-2", "revisor")  # só o que veio do OCR
+    seg = bare.discard("p1-1", "revisor")
+    assert seg.discarded and seg.kept_as_image and seg.approved and not seg.needs_attention
+    assert [s.id for _, s in bare.sources({1})] == ["p1-0", "p1-2"]
+    bare.sync_segments(segs, "teste")
+    assert bare.segment("p1-1").discarded
+    exported = {s["id"]: s for s in bare.export_result()["segments"]}
+    assert exported["p1-1"]["status"] == "discarded" and exported["p1-1"]["text"] is None
+    assert not bare.discard("p1-1", "revisor", False).discarded
+    assert [s.id for _, s in bare.sources({1})] == ["p1-0", "p1-1", "p1-2"]
+
+
+def test_sync_renames_over_stale_job_records(bare):
+    """Um segmento traduzido por uma tarefa e depois apagado deixava o registro da tarefa; renomear
+    outro segmento para o mesmo id quebrava a sincronização (UNIQUE job_segment.job_id, segment_id)."""
+    bare.add_book_segments([{"id": "p1-0", "page": 1, "source": "First."},
+                            {"id": "p1-1", "page": 1, "source": "Second."}])
+    with bare._db() as db:
+        db.execute("INSERT INTO job (engine, model, pages, state, budget, author, created_at)"
+                   " VALUES ('fake','m','1','done',0,'t','now')")
+        job = db.execute("SELECT MAX(id) FROM job").fetchone()[0]
+        db.execute("INSERT INTO job_segment VALUES (?,?,?)", (job, "p1-0", "failed"))
+        db.execute("INSERT INTO job_segment VALUES (?,?,?)", (job, "p1-1", "failed"))
+    # "First." some (apagado, sem tradução); "Second." passa a ser p1-0
+    report = bare.sync_segments([{"id": "p1-0", "page": 1, "source": "Second."}], "teste")
+    assert report["renamed"] == 1 and report["removed"] == 1
+    assert [s.source for s in bare.segments()] == ["Second."]
+    # projeto de uma versão anterior: o registro do segmento apagado ficou para trás
+    with bare._db() as db:
+        db.execute("INSERT INTO job_segment VALUES (?,?,?)", (job, "p1-1", "failed"))
+    bare.sync_segments([{"id": "p1-0", "page": 1, "source": "Intro."},
+                        {"id": "p1-1", "page": 1, "source": "Second."}], "teste")
+    assert [s.source for s in bare.segments()] == ["Intro.", "Second."]

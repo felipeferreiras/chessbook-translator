@@ -9,7 +9,7 @@
   `SUSPICIOUS` para padrões como `3.865` e `\f3`) e pela validação; nada de
   substituições globais de caracteres.
 * Reconhecimento especializado de figurinas em imagem (comparação de glifos,
-  como no probe de fontes) é trabalho da Fase 6.
+  como no probe de fontes): feito na Fase 6, ver ADR-0007.
 * OCRmyPDF (MPL-2.0) é opcional para gerar camada de texto pesquisável no
   original de trabalho, nunca no arquivo original.
 

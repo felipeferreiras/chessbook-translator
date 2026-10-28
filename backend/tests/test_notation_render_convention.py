@@ -6,6 +6,7 @@ from app.chess.notation import (
     Context,
     Convention,
     ConversionPolicy,
+    MoveStatus,
     OutputNotation,
     analyze_region,
     detect_convention,
@@ -107,3 +108,14 @@ def test_detect_convention(texts, expected, confident):
     report = detect_convention(texts)
     assert report.convention == expected
     assert report.confident == confident
+
+
+def test_pawn_figurines_are_read_and_converted():
+    text = "1.♙e4 ♟e5 2.♘f3 ♞c6 3.♗b5 ♟a6 4.♗×c6 ♟d×c6"
+    analysis = analyze_region(text, Context.standard(), Convention.FIGURINE)
+    assert all(m.status == MoveStatus.VALIDATED for m in analysis.moves)
+    assert render_region(analysis, OutputNotation.ENGLISH, Convention.FIGURINE).text == \
+        "1.e4 e5 2.Nf3 Nc6 3.Bb5 a6 4.B×c6 d×c6"
+    assert render_region(analysis, OutputNotation.FIGURINE, Convention.FIGURINE).text == \
+        "1.♙e4 ♙e5 2.♘f3 ♘c6 3.♗b5 ♙a6 4.♗×c6 ♙d×c6"
+    assert render_region(analysis, OutputNotation.PRESERVE, Convention.FIGURINE).text == text

@@ -50,6 +50,7 @@ REVIEW_WARNINGS = frozenset({
     "capture_marker_without_capture",
     "capture_without_marker",
     "check_marker_without_check",
+    "missing_check_marker",  # o livro sempre marca xeque; sem "+", a posição suposta deve estar errada
     "mate_marker_without_mate",
     "en_passant_marker_mismatch",
     "side_to_move_mismatch",
@@ -69,6 +70,10 @@ class Context:
     fresh: bool = True
     # Diagramas não informam o número do lance; o primeiro número do texto vale.
     fullmove_known: bool = True
+    # Linha principal desde o último diagrama, terminando em ``board``. Um
+    # parágrafo novo que volta a um lance anterior ("1...♔d7 também perde")
+    # encontra a posição aqui.
+    line: tuple[chess.Board, ...] = ()
 
     @classmethod
     def unknown(cls) -> Context:
@@ -351,7 +356,10 @@ def analyze_region(
     lexed = lex(text, style)
     alphabet = alphabet_for(convention)
     ctx = context or Context.unknown()
-    main_history: list[chess.Board] = [ctx.board.copy()] if ctx.board else []
+    main_history: list[chess.Board] = (
+        [b.copy() for b in ctx.line] if ctx.line else [ctx.board.copy()] if ctx.board else []
+    )
+    start_len = len(main_history)
     main_source = ctx.source
     history = main_history
     source = main_source
@@ -360,9 +368,13 @@ def analyze_region(
     issues: list[str] = []
     last_played: tuple[chess.Board, chess.Move] | None = None
 
-    def lose_context() -> None:
-        nonlocal history, source, last_played
+    # Por que não há posição (aviso informativo nos lances NO_CONTEXT).
+    lost_reason = "no_position:region_start" if not main_history else ""
+
+    def lose_context(reason: str) -> None:
+        nonlocal history, source, last_played, lost_reason
         history, source, last_played = [], ContextSource.UNKNOWN, None
+        lost_reason = f"no_position:after_{reason}"
 
     if convention == Convention.DESCRIPTIVE:
         issues.append("descriptive_notation_unsupported")
@@ -415,7 +427,7 @@ def analyze_region(
                 issues.append(f"descriptive_notation_unsupported:{atom.text}")
             elif atom.kind == AtomKind.SUSPICIOUS:
                 issues.append(f"suspicious_notation:{atom.text}")
-                lose_context()
+                lose_context("suspicious")
             elif atom.kind == AtomKind.VAR_OPEN:
                 stack.append((list(history), source))
                 history = history[:-1] if len(history) >= 2 else []
@@ -456,9 +468,13 @@ def analyze_region(
                     (i for i, b in enumerate(history) if b.fullmove_number == atom.number and b.turn == side),
                     None,
                 )
+                if idx is not None and idx < start_len - 1 and not _trial(atoms[pos_in_span:], history[: idx + 1], alphabet)[0]:
+                    # Volta a um lance de um parágrafo anterior: só vale se todo o
+                    # segmento for legal a partir dali (senão é outra partida).
+                    idx = None
                 if idx is None:
                     pending_warning.append("move_number_gap")
-                    lose_context()
+                    lose_context("move_number_gap")
                 else:
                     history = history[: idx + 1]
                     last_played = None
@@ -468,28 +484,30 @@ def analyze_region(
             elif atom.kind == AtomKind.MOVE:
                 warnings, pending_warning = pending_warning, []
                 if detached or not history:
-                    moves.append(MoveAnalysis(atom, MoveStatus.NO_CONTEXT, ContextSource.UNKNOWN, warnings=warnings))
+                    reason = "no_position:detached" if detached else lost_reason or "no_position:unknown"
+                    moves.append(MoveAnalysis(atom, MoveStatus.NO_CONTEXT, ContextSource.UNKNOWN,
+                                              warnings=warnings + [reason]))
                     continue
                 board = history[-1]
                 if atom.ellipsis_prefix and board.turn != chess.BLACK:
                     warnings.append("side_to_move_mismatch")
                     moves.append(MoveAnalysis(atom, MoveStatus.ILLEGAL, source, board.fen(), warnings=warnings))
-                    lose_context()
+                    lose_context("side_to_move_mismatch")
                     continue
                 cands, types, cand_warn = _candidates(board, atom, alphabet)
                 warnings += cand_warn
                 if types is None and atom.move and atom.move.piece_char and not atom.move.castle:
                     moves.append(MoveAnalysis(atom, MoveStatus.UNRECOGNIZED_PIECE, source, board.fen(), warnings=warnings))
-                    lose_context()
+                    lose_context("unrecognized_piece")
                 elif not cands:
                     moves.append(MoveAnalysis(atom, MoveStatus.ILLEGAL, source, board.fen(), warnings=warnings))
-                    lose_context()
+                    lose_context("illegal")
                 elif len(cands) > 1:
                     moves.append(MoveAnalysis(
                         atom, MoveStatus.AMBIGUOUS, source, board.fen(),
                         interpretations=[m.uci() for m in cands], warnings=warnings,
                     ))
-                    lose_context()
+                    lose_context("ambiguous")
                 else:
                     move = cands[0]
                     if types and len(types) > 1:
@@ -514,11 +532,13 @@ def analyze_region(
     end_source = source if source in keep else ContextSource.CONTINUATION
     # Uma região sem lances (só prosa) não consome o frescor nem a numeração
     # desconhecida do diagrama: o próximo parágrafo ainda parte dele.
-    untouched = not moves and len(history) == 1 and ctx.board is not None and history[0].fen() == ctx.board.fen()
+    untouched = (not moves and len(history) == start_len and ctx.board is not None
+                 and history[-1].fen() == ctx.board.fen())
     end = (
         Context(history[-1].copy(), end_source if not untouched else ctx.source,
                 fresh=ctx.fresh if untouched else False,
-                fullmove_known=ctx.fullmove_known if untouched else True)
+                fullmove_known=ctx.fullmove_known if untouched else True,
+                line=tuple(history))
         if history else Context.unknown()
     )
     if stack:

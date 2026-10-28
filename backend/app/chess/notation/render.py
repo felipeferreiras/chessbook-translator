@@ -81,6 +81,10 @@ def _convert_token(analysis: MoveAnalysis, target: Convention, alphabet: Alphabe
         if piece_type is None or (mv.promotion_char and promo_type is None):
             return None
     out = text
+    if mv.pawn_char:
+        # Letras não têm símbolo de peão ("e4"); em figurinas, a de peão branca, como as demais.
+        assert out.startswith(mv.pawn_char)
+        out = ("♙" if target == Convention.FIGURINE else "") + out[len(mv.pawn_char):]
     if mv.piece_char:
         assert out.startswith(mv.piece_char)
         out = symbols[piece_type] + out[len(mv.piece_char):]

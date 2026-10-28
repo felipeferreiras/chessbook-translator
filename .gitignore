@@ -10,3 +10,7 @@ spike-out/
 # Nunca versionar livros reais
 samples/
 *.private.pdf
+
+# interface
+frontend/node_modules/
+frontend/dist/

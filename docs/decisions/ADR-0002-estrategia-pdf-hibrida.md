@@ -38,3 +38,14 @@ Regras obrigatórias para os dois motores:
 * O modo fidelidade depende de espaço livre; livros muito densos terão mais
   páginas para revisar ou recompor em B.
 * A comparação visual precisa de alinhamento antes de usar métricas de pixel.
+
+## Notas de implementação (2026-10-23)
+
+* A expansão no espaço livre virou **fluxo por coluna**: blocos traduzidos
+  consecutivos, sem nada fixo entre eles, empurram os seguintes; a redução é
+  aplicada à sequência inteira antes do ajuste bloco a bloco. Detalhes e
+  métricas em `docs/research/07-montagem-pdf.md`.
+* A redação é recortada para fora dos tabuleiros; a comparação de pixels é
+  feita dentro da moldura do diagrama.
+* Sobreposição entre blocos escritos é verificada e impede a página de ser
+  considerada sem pendências.

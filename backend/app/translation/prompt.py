@@ -1,0 +1,100 @@
+"""Instruções e carga de cada chamada de tradução.
+
+O mesmo prompt é usado por todos os provedores, para que a qualidade possa ser
+comparada. As instruções fixas (regras + glossário completo) ficam no início e
+não mudam entre chamadas, o que favorece o cache de prompt dos provedores.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+
+from .glossary import Glossary
+from .provider import Segment, TranslationRequest
+
+PROMPT_VERSION = "2026-10-25.1"
+
+_RULES = """\
+Você é tradutor técnico especializado em literatura de xadrez. Traduza do inglês
+para o português brasileiro, com linguagem natural e tecnicamente precisa.
+
+Regras obrigatórias:
+1. Traduza o sentido completo do autor: argumentos, avaliações, relações de
+   causa, condições e nuances. Não resuma, não omita, não acrescente explicações.
+2. Os marcadores ⟦1⟧, ⟦2⟧... substituem lances e sequências de lances. Copie
+   cada marcador exatamente uma vez, sem alterá-lo, traduzi-lo ou separá-lo.
+   Você pode mudá-lo de lugar dentro da frase quando a sintaxe do português pedir.
+3. Não altere casas do tabuleiro (e4, d6, h8), números de lance, números de
+   diagrama (1-21), números de exercício (1/6), datas e anos.
+4. Preserve símbolos de avaliação e anotação (+−, −+, ±, ∓, ⩲, ⩱, =, ∞, ⊙, △, □,
+   ⇆, !, ?, !!, ??, !?, ?!) exatamente como aparecem.
+5. Não traduza nomes de jogadores nem títulos de obras ("Dvoretsky's Endgame
+   Manual" permanece como está). Para cidades, países e competições, use a
+   forma portuguesa consagrada quando existir (Hamburg → Hamburgo, Moscow →
+   Moscou, Czechoslovakia → Tchecoslováquia, USSR → URSS); sem forma
+   consagrada, mantenha o original. Cabeçalhos de partida ("Jogador –
+   Jogador", competição, local, ano) ficam ao lado dos diagramas, em espaço
+   apertado: mantenha as abreviações curtas e o cabeçalho com no máximo o
+   tamanho do original ("ch" → "camp.", "tt" → "eq.", "m" → "m", "ol" → "ol.",
+   "wm" → "mundial", "ct" → "cand.", "zt" → "zonal", "izt" → "izt",
+   "chsf"/"cmsf" → "semif.", "jr" → "jr").
+6. "White"/"Black" como lados são "as brancas"/"as pretas" (concordância no
+   plural). "diagram" é "diagrama".
+7. O campo "glossary" traz os termos que aparecem neste lote, com a tradução
+   preferencial, alternativas aceitas e traduções a nunca usar. Use-o como
+   preferência, considerando o contexto de cada ocorrência; não é substituição
+   cega.
+8. O campo "context_before" é só contexto: não o traduza nem o inclua na saída.
+9. Quebras de linha ("\n") dentro de um segmento separam itens de lista,
+   entradas de índice ou de sumário: preserve-as nos mesmos pontos.
+10. <b>…</b> marca negrito e <i>…</i> marca itálico do original. Coloque cada
+   par em volta das palavras correspondentes da tradução, na mesma linha; não
+   acrescente, remova nem use outras marcas.
+11. Responda apenas com o JSON pedido: {"translations": [{"id": ..., "text": ...}]},
+   uma entrada por segmento, com o mesmo "id".
+"""
+
+
+def system_prompt(glossary: Glossary | None = None) -> str:
+    """Instruções fixas: o glossário vai por lote (``build_request``), só com os termos presentes."""
+    return _RULES
+
+
+def glossary_for(segments: list[Segment], glossary: Glossary) -> list[str]:
+    text = "\n".join(s.text for s in segments)
+    return Glossary.prompt_lines(glossary.relevant(text))
+
+
+def build_request(segments: list[Segment], glossary: Glossary, section: str = "") -> TranslationRequest:
+    payload = {
+        "section": section,
+        "glossary": glossary_for(segments, glossary),
+        "segments": [
+            {"id": s.id, "kind": s.kind, "text": s.text, **({"context_before": s.context_before} if s.context_before else {})}
+            for s in segments
+        ],
+    }
+    return TranslationRequest(
+        segments=segments,
+        system_prompt=system_prompt(glossary),
+        user_payload=json.dumps(payload, ensure_ascii=False, indent=1),
+    )
+
+
+def glossary_signature(masked_text: str, glossary: Glossary) -> str:
+    """Impressão digital dos termos do glossário que valem para um segmento (para achar traduções desatualizadas)."""
+    terms = "\n".join(Glossary.prompt_lines(glossary.relevant(masked_text)))
+    return hashlib.sha256(terms.encode("utf-8")).hexdigest()[:16]
+
+
+def cache_key(provider: str, model: str, system: str, segment: Segment, section: str,
+              glossary: Glossary | None = None) -> str:
+    """Inclui os termos do glossário do segmento: mudar um termo invalida só quem o usa."""
+    terms = "\n".join(glossary_for([segment], glossary)) if glossary is not None else ""
+    h = hashlib.sha256()
+    for part in (PROMPT_VERSION, provider, model, system, section, segment.kind, segment.context_before, segment.text,
+                 terms):
+        h.update(part.encode("utf-8"))
+        h.update(b"\x00")
+    return h.hexdigest()

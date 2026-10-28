@@ -41,6 +41,7 @@ class AtomKind(StrEnum):
     SUSPICIOUS = "suspicious"
     DESCRIPTIVE = "descriptive"
     ALT_DEST = "alt_dest"  # "♕b5(c2)": mesma peça, casa de destino alternativa
+    ROUTE = "route"  # rota de peça: "♔e2-d2-c2" (não é um lance)
     PAREN_OPEN = "paren_open"  # parêntese de prosa que contém notação
     PAREN_CLOSE = "paren_close"
 
@@ -78,6 +79,7 @@ class MoveSyntax:
     en_passant: bool
     to_file: str | None = None  # captura abreviada "hg": só a coluna de destino
     info: str = ""  # símbolos do Informator colados ao lance: "⊙", "△", "+−"...
+    pawn_char: str | None = None  # figurina de peão explícita: "♙e4", "♟×d5"
 
     @property
     def is_pawn(self) -> bool:
@@ -85,7 +87,8 @@ class MoveSyntax:
 
     @property
     def is_bare_square(self) -> bool:
-        return self.is_pawn and self.separator is None and self.to_file is None
+        # "♙e4" é lance; só "e4" sem figurina pode ser referência a uma casa.
+        return self.is_pawn and self.separator is None and self.to_file is None and self.pawn_char is None
 
     @property
     def claims_capture(self) -> bool | None:
@@ -149,9 +152,9 @@ _MOVE_BODY = rf"""
 |
 (?P<piece>[{_P}])(?P<ff>[a-h])?(?P<fr>[1-8])?(?P<sep>{_SEP})?(?P<to>[a-h][1-8])
 |
-(?P<pff>[a-h])(?P<pfr>[1-8])?(?P<psep>{_SEP})(?P<pto>[a-h][1-8])
+(?P<ppc>[♙♟])?(?P<pff>[a-h])(?P<pfr>[1-8])?(?P<psep>{_SEP})(?P<pto>[a-h][1-8])
 |
-(?P<bare>[a-h][1-8])
+(?P<bpc>[♙♟])?(?P<bare>[a-h][1-8])
 """
 _ABBREVIATED = r"""
 |
@@ -189,12 +192,16 @@ _SUSPICIOUS_RE = re.compile(
     # "3.865": número de lance seguido de dígitos (OCR de "3.♗b5").
     r"(?<![\w.])\d{1,3}\.(?!0-0)\d[\w]*"
     # "\f3", "&c6": símbolo desconhecido colado a uma casa (OCR de "♘f3").
-    rf"|(?<=[\s.])[^\s\w.,;:()\[\]\"'“”‘’«»…\-+=#!?{_P}{_INFO_SINGLE}]{{1,2}}[a-h]?[1-8]?x?[a-h][1-8](?![\w\-])"
+    rf"|(?<=[\s.])[^\s\w.,;:()\[\]\"'“”‘’«»…\-+=#!?{_P}♙♟{_INFO_SINGLE}]{{1,2}}[a-h]?[1-8]?x?[a-h][1-8](?![\w\-])"
 )
 # Casa alternativa logo após um lance: "♕b5(c2)?", "4...♔f4 (g4)".
 _ALT_DEST_RE = re.compile(
     r"(?:(?<=[1-8!?+#⊙△])|(?<=[1-8!?+#⊙△] ))\((?P<sq>[a-h][1-8])\)"
     r"(?P<check>\+(?![−\-])|#)?(?P<ann>!!|\?\?|!\?|\?!|[!?])?(?![\w\-])"
+)
+# Rota de uma peça por três ou mais casas: "♔e2-d2-c2", "...♔f7-e6-d5".
+_ROUTE_RE = re.compile(
+    rf"(?<![\w\-/{_P}])[{_P}]?[a-h][1-8](?:-[a-h][1-8]){{2,}}(?:{_INFO})*(?![\w\-])"
 )
 # Notação descritiva inglesa: P-K4, N-KB3, PxP, Q-R5ch, B-QN5.
 _DESCRIPTIVE_RE = re.compile(
@@ -225,12 +232,12 @@ def _move_syntax(m: re.Match[str]) -> MoveSyntax:
                           to_square=g["to"], **rest)
     if g["pto"]:
         return MoveSyntax(piece_char=None, from_file=g["pff"], from_rank=g["pfr"], separator=g["psep"],
-                          to_square=g["pto"], **rest)
+                          to_square=g["pto"], pawn_char=g["ppc"], **rest)
     if g.get("abff"):
         return MoveSyntax(piece_char=None, from_file=g["abff"], from_rank=None, separator=None,
                           to_square=None, to_file=g["abtf"], **rest)
     return MoveSyntax(piece_char=None, from_file=None, from_rank=None, separator=None, to_square=g["bare"],
-                      **rest)
+                      pawn_char=g["bpc"], **rest)
 
 
 def _valid_abbreviation(m: re.Match[str]) -> bool:
@@ -266,6 +273,9 @@ def _raw_atoms(text: str, style: LexStyle) -> list[Atom]:
                 Atom(AtomKind.MOVE_NUMBER, m.start(), m.end(), m.group(),
                      number=int(m.group(1)), black=m.group(2) != ".")
             )
+    for m in _ROUTE_RE.finditer(text):
+        if claim(m.start(), m.end()):
+            found.append(Atom(AtomKind.ROUTE, m.start(), m.end(), m.group()))
     for m in _ALT_DEST_RE.finditer(text):
         if claim(m.start(), m.end()):
             alt = MoveSyntax(
@@ -383,9 +393,30 @@ def _group_spans(text: str, atoms: list[Atom]) -> list[Span]:
     return spans
 
 
+def _drop_prose_abbreviations(text: str, atoms: list[Atom]) -> list[Atom]:
+    """Captura abreviada ("hg") só é lance logo depois de outra notação.
+
+    Vale depois de número de lance, reticências, outro lance ou "(": "4 hg",
+    "♔g6 hg", "(hg 9 ♔g6)". Em português, "de" vem depois de prosa ("em vista
+    de 1...♔a7"). Roda antes dos parênteses: um "de" dentro de um parêntese de
+    prosa não pode fazê-lo parecer notação.
+    """
+    out: list[Atom] = []
+    for atom in sorted(atoms, key=lambda a: a.start):
+        if atom.kind == AtomKind.MOVE and atom.move and atom.move.to_file is not None:
+            prev = out[-1] if out else None
+            after_notation = (prev is not None and prev.kind in (AtomKind.MOVE_NUMBER, AtomKind.ELLIPSIS, AtomKind.MOVE)
+                              and not text[prev.end:atom.start].strip())
+            if not after_notation and not text[:atom.start].rstrip().endswith("("):
+                continue
+        out.append(atom)
+    return out
+
+
 def lex(text: str, style: LexStyle = DEFAULT_STYLE) -> LexResult:
     """Separa a notação da prosa, preservando as posições originais."""
     atoms = _attach_after_number(text, _raw_atoms(text, style), style)
+    atoms = _drop_prose_abbreviations(text, atoms)
     atoms = _variation_parens(text, atoms)
     spans = _group_spans(text, atoms)
 
@@ -417,7 +448,8 @@ def lex(text: str, style: LexStyle = DEFAULT_STYLE) -> LexResult:
         ):
             span.atoms = [
                 a for a in span.atoms
-                if a.kind in (AtomKind.SQUARE_REF, AtomKind.DESCRIPTIVE, AtomKind.PAREN_OPEN, AtomKind.PAREN_CLOSE)
+                if a.kind in (AtomKind.SQUARE_REF, AtomKind.DESCRIPTIVE, AtomKind.ROUTE,
+                              AtomKind.PAREN_OPEN, AtomKind.PAREN_CLOSE)
             ]
             if not span.atoms:
                 continue

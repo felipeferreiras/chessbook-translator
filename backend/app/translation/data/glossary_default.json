@@ -1,0 +1,276 @@
+{
+  "entries": [
+    {
+      "term": "move",
+      "preferred": "lance",
+      "alternatives": [
+        "jogada"
+      ],
+      "context": "no xadrez, 'move' é 'lance'; 'movimento' só para deslocamento físico de peça",
+      "category": "geral",
+      "avoid": [
+        "movimento"
+      ],
+      "check": false
+    },
+    {
+      "term": "waiting move",
+      "preferred": "lance de espera",
+      "category": "finais",
+      "avoid": [
+        "movimento de espera"
+      ]
+    },
+    {
+      "term": "opening",
+      "preferred": "abertura",
+      "category": "fase"
+    },
+    {
+      "term": "middlegame",
+      "preferred": "meio-jogo",
+      "category": "fase"
+    },
+    {
+      "term": "endgame",
+      "preferred": "final",
+      "alternatives": [
+        "final de partida"
+      ],
+      "context": "fase da partida; 'endgame manual' = manual de finais",
+      "category": "fase",
+      "avoid": [
+        "jogo final"
+      ]
+    },
+    {
+      "term": "ending",
+      "preferred": "final",
+      "context": "sinônimo de endgame",
+      "category": "fase"
+    },
+    {
+      "term": "pawn structure",
+      "preferred": "estrutura de peões",
+      "category": "estratégia"
+    },
+    {
+      "term": "outpost",
+      "preferred": "posto avançado",
+      "category": "estratégia"
+    },
+    {
+      "term": "weak square",
+      "preferred": "casa fraca",
+      "category": "estratégia"
+    },
+    {
+      "term": "initiative",
+      "preferred": "iniciativa",
+      "category": "estratégia"
+    },
+    {
+      "term": "exchange",
+      "preferred": "troca",
+      "alternatives": [
+        "qualidade"
+      ],
+      "context": "'the exchange' (torre por peça menor) = a qualidade; 'win the exchange' = ganhar a qualidade; troca de peças = troca",
+      "category": "material",
+      "priority": 1
+    },
+    {
+      "term": "zugzwang",
+      "preferred": "zugzwang",
+      "context": "não traduzir",
+      "category": "tática"
+    },
+    {
+      "term": "mutual zugzwang",
+      "preferred": "zugzwang recíproco",
+      "alternatives": [
+        "zugzwang mútuo"
+      ],
+      "category": "tática"
+    },
+    {
+      "term": "reciprocal zugzwang",
+      "preferred": "zugzwang recíproco",
+      "category": "tática"
+    },
+    {
+      "term": "zwischenzug",
+      "preferred": "lance intermediário",
+      "context": "pode manter 'zwischenzug' se o autor usar como termo técnico",
+      "category": "tática"
+    },
+    {
+      "term": "clearance",
+      "preferred": "desobstrução",
+      "context": "conforme o contexto",
+      "category": "tática"
+    },
+    {
+      "term": "deflection",
+      "preferred": "desvio",
+      "category": "tática",
+      "avoid": [
+        "atração"
+      ]
+    },
+    {
+      "term": "decoy",
+      "preferred": "atração",
+      "context": "conforme o contexto",
+      "category": "tática",
+      "avoid": [
+        "desvio"
+      ]
+    },
+    {
+      "term": "discovered attack",
+      "preferred": "ataque descoberto",
+      "category": "tática"
+    },
+    {
+      "term": "passed pawn",
+      "preferred": "peão passado",
+      "category": "peões",
+      "avoid": [
+        "peão passante"
+      ]
+    },
+    {
+      "term": "isolated pawn",
+      "preferred": "peão isolado",
+      "category": "peões"
+    },
+    {
+      "term": "backward pawn",
+      "preferred": "peão atrasado",
+      "category": "peões"
+    },
+    {
+      "term": "hanging pieces",
+      "preferred": "peças desprotegidas",
+      "context": "conforme o contexto; 'hanging pawns' = peões pendentes",
+      "category": "tática"
+    },
+    {
+      "term": "kingside",
+      "preferred": "ala do rei",
+      "category": "tabuleiro"
+    },
+    {
+      "term": "queenside",
+      "preferred": "ala da dama",
+      "category": "tabuleiro"
+    },
+    {
+      "term": "opposition",
+      "preferred": "oposição",
+      "category": "finais"
+    },
+    {
+      "term": "distant opposition",
+      "preferred": "oposição distante",
+      "category": "finais"
+    },
+    {
+      "term": "close opposition",
+      "preferred": "oposição próxima",
+      "category": "finais"
+    },
+    {
+      "term": "outflanking",
+      "preferred": "rodeio",
+      "alternatives": [
+        "desbordamento"
+      ],
+      "context": "manobra do rei para contornar a oposição",
+      "category": "finais"
+    },
+    {
+      "term": "corresponding squares",
+      "preferred": "casas correspondentes",
+      "category": "finais"
+    },
+    {
+      "term": "mined squares",
+      "preferred": "casas minadas",
+      "category": "finais"
+    },
+    {
+      "term": "the square",
+      "preferred": "o quadrado",
+      "context": "regra do quadrado do peão",
+      "category": "finais",
+      "check": false
+    },
+    {
+      "term": "stalemate",
+      "preferred": "afogamento",
+      "alternatives": [
+        "rei afogado"
+      ],
+      "category": "regras"
+    },
+    {
+      "term": "shouldering",
+      "preferred": "empurrão de ombro",
+      "alternatives": [
+        "bloqueio com o rei"
+      ],
+      "context": "o rei afasta o rei adversário; termo pode ser mantido entre aspas",
+      "category": "finais"
+    },
+    {
+      "term": "Tragicomedies",
+      "preferred": "Tragicomédias",
+      "context": "título de seção do livro",
+      "category": "editorial",
+      "case_sensitive": true
+    },
+    {
+      "term": "White",
+      "preferred": "as brancas",
+      "context": "lado no xadrez; concordância no plural ('as brancas jogam')",
+      "category": "lados",
+      "case_sensitive": true
+    },
+    {
+      "term": "Black",
+      "preferred": "as pretas",
+      "context": "lado no xadrez; concordância no plural",
+      "category": "lados",
+      "case_sensitive": true
+    },
+    {
+      "term": "rook pawn",
+      "preferred": "peão da coluna da torre",
+      "alternatives": [
+        "peão de torre"
+      ],
+      "category": "peões"
+    },
+    {
+      "term": "bishop pair",
+      "preferred": "par de bispos",
+      "category": "estratégia"
+    },
+    {
+      "term": "draw",
+      "preferred": "empate",
+      "category": "resultado"
+    },
+    {
+      "term": "resigned",
+      "preferred": "abandonou",
+      "context": "'Black resigned' = as pretas abandonaram",
+      "category": "resultado",
+      "alternatives": [
+        "abandonar"
+      ]
+    }
+  ]
+}
