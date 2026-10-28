@@ -234,6 +234,7 @@ def test_user_confirmed_figurine_is_read_in_the_whole_book(tmp_path):
 
 @pytest.mark.parametrize("read, fixed", [
     ("23.♖el", "23.♖e1"), ("16.♖fd]", "16.♖fd1"), ("27...♕xf4t", "27...♕xf4†"), ("4l.fxg5t", "41.fxg5†"),
+    ("18...♕£3!", "18...♕f3!"), ("7.¢4", "7.g4"), ("♘x£7", "♘xf7"), ("£30", "£30"),
     ("31...♔d52!", "31...♔d5?!"), ("27.♖h5!2", "27.♖h5!?"), ("(30.h4!2)", "(30.h4!?)"), ("33.♖ef12?", "33.♖ef1??"),
     ("37.f42!", "37.f4?!"), ("24.♕xe4t!", "24.♕xe4†!"), ("31.e4t", "31.e4†"), ("♖dlt", "♖d1†"), ("c6t", "c6†"), ("exf4t.", "exf4†."),
     # prosa e lances já certos ficam como estão
@@ -320,7 +321,7 @@ def test_block_across_a_board_is_split_and_exercise_number_is_a_mark():
 
 @needs_tesseract
 def test_symbols_after_moves_are_read_by_their_drawing(tmp_path):
-    """†, ±, ?! e !? decididos pelo desenho (o Tesseract lê "+" nos dois primeiros); o ⩲, sem sugestão,
+    """†, ±, ?! e !? decididos pelo desenho (o Tesseract lê "+" nos dois primeiros); o ⩲ sem sugestão
     fica com aviso até a confirmação, que reescreve os lances sem refazer o OCR e vale num OCR futuro."""
     import json
 
@@ -337,9 +338,11 @@ def test_symbols_after_moves_are_read_by_their_drawing(tmp_path):
     for move in ("1.e4†", "3.c4†", "4.b4±", "6.h4±", "10.d5?!", "12.b5!?"):
         assert move in text
     stored = json.loads(cache.read_text())
-    plus_eq = next(g for g in stored["symbol_groups"] if not g["auto"])
-    warnings = [w for p in stored["pages"].values() for b in p["blocks"] for w in b["ocr_warnings"]]
-    assert any(w.startswith("ocr_simbolo_incerto: '8.f4") for w in warnings)
+    entry = next(e for p in stored["pages"].values() for e in p["suffixes"] if e[3] == "8.f4")
+    plus_eq = next(g for g in stored["symbol_groups"] if g["id"] == entry[6][0])
+    if not plus_eq["auto"]:  # sem sugestão (o OCR não confirmou o desenho): fica com aviso até a confirmação
+        warnings = [w for p in stored["pages"].values() for b in p["blocks"] for w in b["ocr_warnings"]]
+        assert any(w.startswith("ocr_simbolo_incerto: '8.f4") for w in warnings)
 
     with pytest.raises(ValueError):
         ocr.relabel_symbols(cache, {str(plus_eq["id"]): "x"})

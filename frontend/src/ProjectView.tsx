@@ -235,6 +235,7 @@ function GroupsPanel(props: { kind: "figurines" | "symbols" | "pieces"; projectI
   const [info, setInfo] = useState<GroupInfo | null>(null);
   const [labels, setLabels] = useState<Record<string, string>>({});
   const [error, setError] = useState("");
+  const [showSmall, setShowSmall] = useState(false);
 
   useEffect(() => {
     const load = figurines ? api.figurines(props.projectId)
@@ -243,7 +244,8 @@ function GroupsPanel(props: { kind: "figurines" | "symbols" | "pieces"; projectI
       setInfo(f);
       const initial: Record<string, string> = {};
       for (const g of f.groups) {
-        initial[g.id] = f.labels[g.id] ?? (figurines ? ((g.margin ?? 0) >= 0.05 ? g.auto : "") : g.auto);
+        // símbolos e peças: sem confirmação nem sugestão, fica "— escolha —" e não é enviado
+        initial[g.id] = f.labels[g.id] ?? (figurines ? ((g.margin ?? 0) >= 0.05 ? g.auto : "") : (g.auto || "?"));
       }
       setLabels(initial);
     }, (e) => setError(String(e)));
@@ -254,10 +256,11 @@ function GroupsPanel(props: { kind: "figurines" | "symbols" | "pieces"; projectI
   const options = figurines ? PIECES : props.kind === "symbols" ? SYMBOL_OPTIONS : PIECE_OPTIONS;
   const submit = async () => {
     setError("");
+    const chosen = Object.fromEntries(Object.entries(labels).filter(([, v]) => v !== "?"));
     try {
-      props.onStart(await (figurines ? api.setFigurines(props.projectId, labels, props.author)
-        : props.kind === "symbols" ? api.setSymbols(props.projectId, labels, props.author)
-        : api.setPieces(props.projectId, labels, props.author)));
+      props.onStart(await (figurines ? api.setFigurines(props.projectId, chosen, props.author)
+        : props.kind === "symbols" ? api.setSymbols(props.projectId, chosen, props.author)
+        : api.setPieces(props.projectId, chosen, props.author)));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
@@ -274,7 +277,7 @@ function GroupsPanel(props: { kind: "figurines" | "symbols" | "pieces"; projectI
             {confirmed ? " As escolhas atuais já foram confirmadas." : " Nada foi confirmado ainda: os valores são sugestões."}
           </p>
           <ul className="figurines">
-            {info.groups.map((g) => {
+            {info.groups.filter((g) => figurines || showSmall || g.count > 5).map((g) => {
               const read = (figurines ? g.ocr : g.read) ?? [];
               const doubtful = !(String(g.id) in info.labels) && (figurines ? (g.margin ?? 0) < 0.05 : !g.auto);
               return (
@@ -282,7 +285,8 @@ function GroupsPanel(props: { kind: "figurines" | "symbols" | "pieces"; projectI
                   <img src={g.image} alt={`grupo ${g.id}`} width={48} height={48} />
                   <select value={labels[g.id] ?? ""} aria-label={`Grupo ${g.id}`}
                           onChange={(e) => setLabels({ ...labels, [g.id]: e.target.value })}>
-                    {!figurines && !options.some(([v]) => v === (labels[g.id] ?? "")) && (
+                    {!figurines && <option value="?">— escolha —</option>}
+                    {!figurines && labels[g.id] !== "?" && !options.some(([v]) => v === (labels[g.id] ?? "")) && (
                       <option value={labels[g.id]}>{labels[g.id]}</option>
                     )}
                     {options.map(([v, t]) => <option key={v} value={v}>{t}</option>)}
@@ -296,6 +300,14 @@ function GroupsPanel(props: { kind: "figurines" | "symbols" | "pieces"; projectI
               );
             })}
           </ul>
+          {!figurines && info.groups.some((g) => g.count <= 5) && (
+            <p className="small">
+              <button onClick={() => setShowSmall(!showSmall)}>
+                {showSmall ? "Ocultar" : "Mostrar"} os {info.groups.filter((g) => g.count <= 5).length} grupos pequenos
+              </button>{" "}
+              <span className="muted">(até 5 vezes; sem escolha, herdam do grupo decidido mais parecido)</span>
+            </p>
+          )}
           <button className="primary" disabled={props.busy || !props.author.trim()} onClick={submit}>
             {text.button}
           </button>

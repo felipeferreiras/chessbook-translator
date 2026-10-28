@@ -80,11 +80,11 @@ Cada diagrama aparece então na aba **Páginas**, junto dos parágrafos: a image
 original ao lado do tabuleiro lido, a posição (FEN) editável e a vez de jogar
 (pela marca ▼ ou △). **Confirmar posição** (ou **Aprovar página**) marca como
 conferido; posição incompleta ou impossível pede atenção. Com as posições
-lidas, os lances que vêm logo depois do diagrama, ou na solução do exercício
-("1. Golod – Gerzhoy…" é o exercício 1), são conferidos pelas regras: lance
-impossível ou sinal de xeque que não confere com a posição viram aviso no
-parágrafo (costuma ser casa ou símbolo mal lido). Depois de confirmar
-posições, **Sincronizar** atualiza esses avisos.
+lidas, os lances do texto logo abaixo do diagrama (mesma página e coluna) são
+conferidos pelas regras: lance que não confere com a posição ou sinal de xeque
+que não confere viram aviso no parágrafo. Costuma ser casa ou símbolo mal lido,
+mas pode ser uma ameaça ou outra variante citada: confira com a imagem. Depois
+de corrigir posições, **Sincronizar** atualiza esses avisos.
 
 ### Corrigir o original
 

@@ -52,6 +52,14 @@ def style_masks(pdf: Path, pages: set[int], ocr_cache: Path | None = None):
     return notation, {b.id: b.region.main_mask for b in segs}, {b.id: b.region.italic_mask for b in segs}
 
 
+def check_moves(notation) -> None:
+    """Livro digitalizado: confere os lances pelas posições dos diagramas (os avisos vão nos parágrafos)."""
+    from app.pipeline.notation_pass import OCR_FLAG, validate
+
+    if any(OCR_FLAG in r.source_flags for r in notation.regions):
+        validate(notation)
+
+
 def segment_dicts(segs) -> list[dict]:
     return [{"id": b.id, "page": b.page, "section": b.section.label, "source": b.region.resolved.text,
              "kind": b.kind, "bold": b.region.main_mask, "italic": b.region.italic_mask, "blocked": b.blocked,
@@ -74,6 +82,9 @@ def sync_project(store: ProjectStore, author: str, progress=None) -> dict:
     ocr_cache = store.dir / "ocr.json"
     doc = pymupdf.open(store.original_path)
     notation = collect(doc, ocr_cache=ocr_cache, ocr_mode="on" if ocr_cache.exists() else "off", progress=progress)
+    if progress:
+        progress("conferindo os lances", doc.page_count, doc.page_count)
+    check_moves(notation)
     segs = book_segments(notation, doc.metadata.get("title", "") or store.info["name"])
     return store.sync_segments(segment_dicts(segs), author)
 
@@ -144,6 +155,7 @@ def main() -> None:
             if passe1.exists():  # para reler com as figurinas confirmadas sem refazer o OCR
                 passe1.replace(store.dir / "ocr-passe1.json.gz")
             print()
+        check_moves(notation)
         segs = book_segments(notation, doc.metadata.get("title", "") or args.name)
         store.add_book_segments(segment_dicts(segs))
         print(f"projeto criado em {store.dir} (sha256 {store.info['sha256'][:12]}…): {len(segs)} segmentos")

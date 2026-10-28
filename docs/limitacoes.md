@@ -61,11 +61,13 @@ que o aplicativo faz para não esconder o problema.
   as peças confirmadas pelo usuário ("Peças dos diagramas"); um diagrama sem a
   marca ▼/△ fica sem vez de jogar até a revisão. Tabuleiro virado (pretas
   embaixo) não é reconhecido.
-* Os lances de um livro digitalizado só são conferidos pelas regras onde a
-  posição é certa: logo abaixo do diagrama, na mesma página e coluna, e nas
-  soluções numeradas ("N. Fulano – Beltrano") ligadas ao exercício N. Texto
-  que continua na página seguinte ou partida que começa do zero sem diagrama
-  ficam sem essa conferência.
+* Os lances de um livro digitalizado só são conferidos pelas regras logo
+  abaixo do diagrama, na mesma página e coluna. Ligar as soluções ("N. Fulano –
+  Beltrano") aos exercícios pela ordem foi medido no *Grandmaster Preparation*
+  e não serviu (a maioria dos primeiros lances não conferia): as soluções ficam
+  sem essa conferência. No livro inteiro: 356 lances conferidos, 29 avisos de
+  lance que não confere (cerca de metade é leitura errada; o resto, ameaça ou
+  variante citada).
 * Casas lidas erradas sem aviso continuam possíveis onde não há posição (ex.:
   "♕e4" no lugar de "♕g4" no meio de uma partida comentada); por isso a
   revisão com a imagem continua necessária.

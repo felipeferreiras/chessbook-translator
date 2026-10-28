@@ -71,7 +71,8 @@ class BookSegment:
             if m.context not in (ContextSource.FEN_PROPOSED, ContextSource.FEN_CONFIRMED, ContextSource.CONTINUATION):
                 continue
             if m.status == MoveStatus.ILLEGAL:
-                flags.append(f"ocr_lance_impossivel: '{m.atom.text}' não é possível na posição do diagrama")
+                flags.append(f"ocr_lance_impossivel: '{m.atom.text}' não confere com a posição do diagrama acima"
+                             " (casa ou peça mal lida? ou lance de outra variante)")
             elif m.status == MoveStatus.VALIDATED and set(m.warnings) & _CHECK_WARNINGS:
                 flags.append(f"ocr_sinal_de_xeque: '{m.atom.text}' — o sinal de xeque não confere com a posição"
                              " (± lido como +, ou † perdido?)")

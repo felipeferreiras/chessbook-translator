@@ -539,23 +539,27 @@ def _text_blocks(hocr: str, boards: list[tuple[float, float, float, float]], sca
 
 
 def _apart_from_boards(blocks: list[OcrBlock], areas: list[pymupdf.Rect]) -> list[OcrBlock]:
-    """Bloco que atravessa um diagrama (o número do exercício acima e a legenda abaixo, juntos pelo
-    Tesseract) vira dois: o texto traduzido nunca é escrito por cima do tabuleiro."""
+    """Nenhum bloco cobre um diagrama: o bloco é partido onde a linha seguinte o faria cobrir.
+
+    O Tesseract junta o número do exercício acima e a legenda abaixo do tabuleiro (p. 58), ou o
+    título corrente centrado com o parágrafo da coluna ao lado (p. 169); a caixa desse bloco
+    atravessava o tabuleiro, e a tradução era escrita por cima dele.
+    """
+    def covers(box: tuple) -> bool:
+        r = pymupdf.Rect(*box)
+        return any((inter := r & a).width > 2 and inter.height > 2 for a in areas)
+
     out: list[OcrBlock] = []
-    pending = list(blocks)
-    while pending:
-        block = pending.pop(0)
-        area = next((a for a in areas if pymupdf.Rect(*block.bbox).intersects(a)
-                     and any(ln.bbox[3] <= a.y0 + 0.5 * a.height for ln in block.lines)
-                     and any(ln.bbox[1] >= a.y0 + 0.5 * a.height for ln in block.lines)), None)
-        if area is None:
-            out.append(block)
-            continue
-        middle = area.y0 + 0.5 * area.height
-        for part in ([ln for ln in block.lines if (ln.bbox[1] + ln.bbox[3]) / 2 < middle],
-                     [ln for ln in block.lines if (ln.bbox[1] + ln.bbox[3]) / 2 >= middle]):
-            if part:
-                pending.append(OcrBlock(_union([ln.bbox for ln in part]), part))
+    for block in blocks:
+        lines = sorted(block.lines, key=lambda ln: (ln.bbox[1], ln.bbox[0]))
+        part: list[OcrLine] = []
+        for ln in lines:
+            if part and covers(_union([x.bbox for x in [*part, ln]])) and not covers(_union([x.bbox for x in part])):
+                out.append(OcrBlock(_union([x.bbox for x in part]), part))
+                part = []
+            part.append(ln)
+        if part:
+            out.append(OcrBlock(_union([x.bbox for x in part]), part))
     return out
 
 
@@ -663,6 +667,8 @@ def fix_move_glyphs(text: str) -> tuple[str, bool]:
     if any(ch in WHITE_FIGURINES for ch in out) or re.match(r"^\(?\d{1,3}\.|^[a-h](?:x[a-h])?[1-8]t", out):
         out = _FIX_ONE_RE.sub(r"\g<1>1", out)
         out = _FIX_CHECK_RE.sub(r"\g<1>†", out)
+        # coluna lida como símbolo, entre a peça (ou o número, ou o "x") e a fileira: "♕£3" é "♕f3", "¢4" é "g4"
+        out = re.sub(r"(?<=[♔♕♖♗♘x.])([£¢])(?=[1-8](?![0-9]))", lambda m: "f" if m.group(1) == "£" else "g", out)
         # "?" lido como "2" logo depois da casa: "d52!" é "d5?!", "e5!2" é "e5!?" (não há casa com 3 caracteres)
         out = _FIX_QUESTION_RE.sub(lambda m: m.group(1) + m.group(2).replace("2", "?"), out)
     return out, out != text
