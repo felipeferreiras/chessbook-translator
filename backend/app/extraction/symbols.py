@@ -298,10 +298,26 @@ def inherit(groups: list[dict], confirmed: list[dict]) -> dict[str, str]:
     return out
 
 
+SMALL_GROUP = 5
+NEAREST_SIMILARITY = 0.80
+
+
 def resolved(groups: list[dict], confirmed: dict[str, str]) -> dict[str, str]:
-    """Símbolo de cada grupo: o confirmado; senão, a sugestão, quando há."""
+    """Símbolo de cada grupo: o confirmado; senão, a sugestão, quando há; um grupo pequeno sem nenhuma
+    das duas herda o do grupo decidido mais parecido (mesma altura e posição na linha)."""
     out = {str(g["id"]): g["auto"] for g in groups if g["auto"]}
     out.update(confirmed)
+    decided = [(g, _vec_from_b64(g["vec"])) for g in groups if str(g["id"]) in out]
+    for g in groups:
+        gid = str(g["id"])
+        if gid in out or g["count"] > SMALL_GROUP:
+            continue
+        v = _vec_from_b64(g["vec"])
+        best = max(((_sim(v, dv), d) for d, dv in decided
+                    if abs(d["height"] - g["height"]) <= SHAPE_TOLERANCE and abs(d["top"] - g["top"]) <= SHAPE_TOLERANCE),
+                   default=(0.0, None), key=lambda t: t[0])
+        if best[1] is not None and best[0] >= NEAREST_SIMILARITY:
+            out[gid] = out[str(best[1]["id"])]
     return out
 
 
@@ -317,11 +333,13 @@ def apply_to_pages(pages: dict, labels: dict[str, str]) -> dict[str, int]:
     done = uncertain = 0
     for page in pages.values():
         cleaned: set[int] = set()
-        for b, ln, sp, head, tail, read, gids in page.get("suffixes", []):
+        for b, ln, sp, head, tail, read, gids, *rest in page.get("suffixes", []):
             block = page["blocks"][b]
             span = block["lines"][ln]["spans"][sp]
             original = head + read + tail
-            chosen = [labels.get(str(g)) for g in gids]
+            reads = rest[0] if rest else [""] * len(gids)
+            # "" = não é símbolo: fica o que o OCR leu naquele trecho (letra, algarismo da casa)
+            chosen = [r if (lab := labels.get(str(g))) == "" else lab for g, r in zip(gids, reads, strict=True)]
             ok = all(c is not None for c in chosen)
             text = head + "".join(chosen) + tail if ok else original
             span["text"] = text + (" " if span["text"].endswith(" ") else "")
@@ -341,4 +359,5 @@ def apply_to_pages(pages: dict, labels: dict[str, str]) -> dict[str, int]:
 
 
 def page_entries(suffixes: list[Suffix], glyphs: list[Glyph]) -> list[list]:
-    return [[s.block, s.line, s.span, s.head, s.tail, s.read, [glyphs[i].group for i in s.glyphs]] for s in suffixes]
+    return [[s.block, s.line, s.span, s.head, s.tail, s.read, [glyphs[i].group for i in s.glyphs],
+             [glyphs[i].read for i in s.glyphs]] for s in suffixes]

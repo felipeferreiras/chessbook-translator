@@ -57,8 +57,18 @@ que o aplicativo faz para não esconder o problema.
   letra que o OCR viu ("We4"), com aviso.
 * Lances que o OCR estragou além da correção de leitura única ("♕65!",
   "♘FB") ficam como lidos, com aviso: a correção é manual, na revisão.
-* A posição dos diagramas digitalizados não é lida (sem FEN): os lances dessas
-  páginas não são validados pela legalidade.
+* A posição dos diagramas digitalizados é lida pelo contorno das peças, com
+  as peças confirmadas pelo usuário ("Peças dos diagramas"); um diagrama sem a
+  marca ▼/△ fica sem vez de jogar até a revisão. Tabuleiro virado (pretas
+  embaixo) não é reconhecido.
+* Os lances de um livro digitalizado só são conferidos pelas regras onde a
+  posição é certa: logo abaixo do diagrama, na mesma página e coluna, e nas
+  soluções numeradas ("N. Fulano – Beltrano") ligadas ao exercício N. Texto
+  que continua na página seguinte ou partida que começa do zero sem diagrama
+  ficam sem essa conferência.
+* Casas lidas erradas sem aviso continuam possíveis onde não há posição (ex.:
+  "♕e4" no lugar de "♕g4" no meio de uma partida comentada); por isso a
+  revisão com a imagem continua necessária.
 * Itálico e fonte original se perdem; títulos saem em serifa normal.
 * ~5 s por página, uma vez por livro (refeito quando o OCR do programa muda);
   reler com figurinas confirmadas: ~3 s por página. As figurinas precisam

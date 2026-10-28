@@ -123,7 +123,8 @@ def _sha256(path: Path) -> str:
 
 _NOTATION_HINT = re.compile(r"[0-9♔♕♖♗♘♚♛♜♝♞]|\b[a-h][1-8]|[+#†]")
 # avisos que só nascem de algo com forma de lance: sempre pedem conferência
-_MOVE_WARNINGS = ("ocr_peca_incerta", "ocr_lance_incompleto", "ocr_lance_ilegivel", "ocr_figurina_sem_lugar")
+_MOVE_WARNINGS = ("ocr_peca_incerta", "ocr_lance_incompleto", "ocr_lance_ilegivel", "ocr_figurina_sem_lugar",
+                  "ocr_lance_impossivel", "ocr_sinal_de_xeque", "ocr_simbolo_incerto")
 
 
 def _touches_notation(flag: str) -> bool:

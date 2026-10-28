@@ -61,6 +61,40 @@ depois de atualizar o programa.
 Faça isso **antes de traduzir**: parágrafos traduzidos com a peça errada
 precisam ser traduzidos de novo.
 
+### Símbolos do livro e peças dos diagramas
+
+Na mesma aba, nesta ordem, depois das figurinas:
+
+1. **Símbolos do livro**: os desenhos que vêm depois da casa dos lances, como
+   xeque (†), mate, ! e ?, avaliação (± ⩲ ⩱ ∓ = ∞) e a peça da promoção
+   (c1=♕). O OCR confunde "†" com "±" e lê "?!" como "2!"; aqui o desenho
+   decide. Confira cada grupo e clique **Confirmar e reescrever os lances**
+   (segundos, sem refazer o OCR). Grupo sem símbolo decidido deixa o lance como
+   o OCR leu, com aviso.
+2. **Peças dos diagramas**: os desenhos das peças nas casas dos diagramas,
+   agrupados (o peão preto, o rei branco…). Escolha a peça de cada grupo e
+   clique **Confirmar e refazer as posições**. Grupo pequeno herda a peça do
+   grupo confirmado mais parecido.
+
+Cada diagrama aparece então na aba **Páginas**, junto dos parágrafos: a imagem
+original ao lado do tabuleiro lido, a posição (FEN) editável e a vez de jogar
+(pela marca ▼ ou △). **Confirmar posição** (ou **Aprovar página**) marca como
+conferido; posição incompleta ou impossível pede atenção. Com as posições
+lidas, os lances que vêm logo depois do diagrama, ou na solução do exercício
+("1. Golod – Gerzhoy…" é o exercício 1), são conferidos pelas regras: lance
+impossível ou sinal de xeque que não confere com a posição viram aviso no
+parágrafo (costuma ser casa ou símbolo mal lido). Depois de confirmar
+posições, **Sincronizar** atualiza esses avisos.
+
+### Corrigir o original
+
+Num parágrafo lido por OCR (ou bloqueado), **Corrigir original** abre o texto
+de origem para edição: corrija lances, números ou palavras **antes de
+traduzir**. O texto lido fica guardado ("Texto como foi lido da imagem") e
+**Voltar ao texto lido** desfaz a correção. Uma tradução automática feita sobre
+o texto antigo volta a pendente; uma revisão sua fica, mas pede conferência. A
+correção sobrevive à sincronização.
+
 ## 3. Traduzir
 
 Aba **Traduzir**:
@@ -108,7 +142,10 @@ o original e a tradução editável.
   imagem**, nunca são apagados. Os curtos não pedem nada; os longos pedem uma
   olhada e saem da lista com **Manter como na imagem**.
 * Trocas do OCR com uma leitura só são corrigidas e ficam anotadas no
-  parágrafo: "♖el" → "♖e1", "4l." → "41.", "t" no fim do lance → "†".
+  parágrafo: "♖el" → "♖e1", "4l." → "41.", "t" no fim do lance → "†",
+  "d52!" → "d5?!".
+* O título corrente da página ("Chapter 1 – Candidate Moves") também é
+  traduzido; o número da página fica como está.
 
 Aba **Glossário**: termos com tradução preferida, alternativas e traduções a
 evitar. Mudou um termo? "O que traduzir → afetados pelo glossário" retraduz só

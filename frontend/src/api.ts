@@ -28,11 +28,23 @@ export interface Segment {
 }
 
 export interface Reprocess {
-  kind?: "sync" | "figurines" | "symbols";
+  kind?: "sync" | "figurines" | "symbols" | "pieces";
   state: "none" | "running" | "done" | "failed" | "interrupted";
   progress?: { stage: string; done: number; total: number };
   result?: Record<string, number> | null;
   error?: string | null;
+}
+
+export interface DiagramInfo {
+  id: string;
+  page: number;
+  index: number;
+  placement: string | null;
+  read: string | null;
+  side_to_move: "w" | "b" | null;
+  issues: string[];
+  confirmed: boolean;
+  needs_attention: boolean;
 }
 
 export interface FigurineGroup {
@@ -43,6 +55,7 @@ export interface FigurineGroup {
   margin?: number;
   ocr?: string[];
   read?: string[];
+  black?: boolean;
   image: string;
 }
 
@@ -277,6 +290,16 @@ export const api = {
   reprocess: (id: string) => call<Reprocess>(`${p(id)}/reprocess`),
   figurines: (id: string) => call<FigurineInfo>(`${p(id)}/figurines`),
   symbols: (id: string) => call<FigurineInfo>(`${p(id)}/symbols`),
+  pieces: (id: string) => call<FigurineInfo>(`${p(id)}/pieces`),
+  setPieces: (id: string, labels: Record<string, string>, author: string) =>
+    call<Reprocess>(`${p(id)}/pieces`, { method: "PUT", body: JSON.stringify({ labels, author }) }),
+  diagrams: (id: string, page: number) => call<DiagramInfo[]>(`${p(id)}/pages/${page}/diagrams`),
+  setDiagram: (id: string, page: number, index: number, placement: string | null, side: string | null,
+               author: string) =>
+    call<DiagramInfo>(`${p(id)}/pages/${page}/diagrams/${index}`, {
+      method: "PUT", body: JSON.stringify({ placement, side, confirmed: true, author }),
+    }),
+  diagramImage: (id: string, page: number, index: number) => `/api${p(id)}/pages/${page}/diagrams/${index}/image`,
   setSymbols: (id: string, labels: Record<string, string>, author: string) =>
     call<Reprocess>(`${p(id)}/symbols`, { method: "PUT", body: JSON.stringify({ labels, author }) }),
   setFigurines: (id: string, labels: Record<string, string>, author: string) =>

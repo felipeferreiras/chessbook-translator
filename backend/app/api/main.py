@@ -242,6 +242,68 @@ class FigurinesIn(BaseModel):
     author: str = Field(min_length=1, max_length=80)
 
 
+@app.get("/api/projects/{project_id}/pieces")
+def pieces(project_id: str) -> dict:
+    """Peças dos diagramas digitalizados, agrupadas pelo desenho."""
+    return reprocess.pieces_info(_store(project_id))
+
+
+@app.put("/api/projects/{project_id}/pieces")
+def set_pieces(project_id: str, body: FigurinesIn) -> dict:
+    """Grava as peças confirmadas e refaz as posições dos diagramas (sem refazer o OCR), depois sincroniza."""
+    store = _store(project_id)
+    info = reprocess.pieces_info(store)
+    if not info["available"]:
+        raise HTTPException(409, info["reason"])
+    try:
+        return reprocess.start(store, "pieces", body.author, body.labels)
+    except StoreError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@app.get("/api/projects/{project_id}/pages/{page}/diagrams")
+def page_diagrams(project_id: str, page: int) -> list[dict]:
+    return reprocess.diagrams(_store(project_id), page)
+
+
+class DiagramIn(BaseModel):
+    placement: str | None = Field(default=None, max_length=100)
+    side: str | None = Field(default=None, pattern="^[wb]$")
+    confirmed: bool = True
+    author: str = Field(min_length=1, max_length=80)
+
+
+@app.put("/api/projects/{project_id}/pages/{page}/diagrams/{index}")
+def set_page_diagram(project_id: str, page: int, index: int, body: DiagramIn) -> dict:
+    """Corrige ou confirma a posição de um diagrama digitalizado. Os avisos dos lances que dependem
+    dela mudam na próxima sincronização."""
+    from app.extraction.ocr import set_diagram
+
+    store = _store(project_id)
+    try:
+        d = set_diagram(store.dir / "ocr.json", page, index, body.placement, body.side, body.confirmed)
+    except (ValueError, FileNotFoundError) as exc:
+        raise HTTPException(409, str(exc)) from exc
+    with store._db() as db:
+        store._log(db, "diagram", f"d{page}-{index}", "confirm" if body.confirmed else "edit", d.get("read"),
+                   json.dumps({"placement": d["placement"], "side": d["side_to_move"]}), body.author)
+    return next(x for x in reprocess.diagrams(store, page) if x["index"] == index)
+
+
+@app.get("/api/projects/{project_id}/pages/{page}/diagrams/{index}/image")
+def diagram_image(project_id: str, page: int, index: int) -> Response:
+    from app.extraction.ocr import diagram_area
+
+    store = _store(project_id)
+    d = next((x for x in reprocess.diagrams(store, page) if x["index"] == index), None)
+    if d is None:
+        raise HTTPException(404, "diagrama inexistente")
+    doc = pymupdf.open(store.original_path)
+    clip = pymupdf.Rect(diagram_area(tuple(d["board"]))) & doc[page - 1].rect
+    png = doc[page - 1].get_pixmap(dpi=130, clip=clip).tobytes("png")
+    return Response(png, media_type="image/png", headers={"Cache-Control": "no-store"})
+
+
 @app.get("/api/projects/{project_id}/symbols")
 def symbols(project_id: str) -> dict:
     """Desenhos depois das casas dos lances (xeque, avaliação, anotação, promoção), agrupados."""
@@ -284,7 +346,8 @@ def project(project_id: str) -> dict:
     store = _store(project_id)
     segs = store.segments()
     return {**store.info, "original_ok": store.verify_original(), "pages_with_segments": store.pages(),
-            "attention": [s.id for s in segs if s.needs_attention],
+            "attention": [s.id for s in segs if s.needs_attention]
+                         + [d["id"] for d in reprocess.diagrams(store) if d["needs_attention"]],
             "approved": sum(s.approved for s in segs), "segments": len(segs),
             "has_translated_pdf": (store.dir / "output" / "traduzido.pdf").exists(),
             "spent": store.spent(), "spend_limit": store.spend_limit}
@@ -344,8 +407,21 @@ def approve(project_id: str, segment_id: str, body: ApproveIn) -> dict:
 
 @app.post("/api/projects/{project_id}/pages/{page}/approve")
 def approve_page(project_id: str, page: int, body: AuthorIn) -> dict:
-    """Aprova o que a página tem de traduzido; recusas da proteção e falhas ficam de fora."""
-    return _store(project_id).approve_page(page, body.author)
+    """Aprova o que a página tem de traduzido e confirma os diagramas com posição completa;
+    recusas da proteção, falhas e posições incompletas ficam de fora."""
+    from app.extraction.ocr import set_diagram
+
+    store = _store(project_id)
+    out = store.approve_page(page, body.author)
+    for d in reprocess.diagrams(store, page):
+        if d["confirmed"]:
+            continue
+        if d["placement"] is None or d["issues"]:
+            out["skipped"].append(d["id"])
+            continue
+        set_diagram(store.dir / "ocr.json", page, d["index"], None, None, True)
+        out["approved"].append(d["id"])
+    return out
 
 
 @app.get("/api/projects/{project_id}/revisions")

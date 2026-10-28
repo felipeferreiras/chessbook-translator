@@ -636,6 +636,7 @@ class OcrPage:
     move_confidence: dict[int, float] = field(default_factory=dict)  # posição da palavra → menor confiança da casa
     suffixes: list = field(default_factory=list)  # ``symbols.Suffix``: o fim de cada lance, desenho por desenho
     glyphs: list = field(default_factory=list)  # ``symbols.Glyph``
+    diagrams: list = field(default_factory=list)  # por tabuleiro: (contornos das 64 casas, vez de jogar)
 
 
 _REST_RE = re.compile(r"^[a-h]?[1-8]?[x:×]?[a-h][1-8]")
@@ -916,8 +917,12 @@ def read_page(page: pymupdf.Page, scan: PageScan, protos: list[Prototype], lang:
         if notes:
             warnings[len(out_blocks)] = notes
         out_blocks.append({"type": 0, "bbox": tuple(bbox), "lines": lines, "number": len(out_blocks)})
+    from app.extraction import boards as board_reader
+
+    diagrams = [(board_reader.board_shapes(board_reader.board_cells(second_gray, b, scan.scale)),
+                 board_reader.side_to_move(second_gray, b, scan.scale)) for b in scan.boards]
     return OcrPage(out_blocks, scan.boards, warnings, stats["words"], stats["low"], stats["pieces"],
-                   stats["uncertain"], bool(figs), move_conf, suffixes, page_glyphs)
+                   stats["uncertain"], bool(figs), move_conf, suffixes, page_glyphs, diagrams)
 
 
 def version(lang: str = "eng") -> str:
@@ -927,7 +932,7 @@ def version(lang: str = "eng") -> str:
 
     h = hashlib.sha256(lang.encode())
     here = Path(__file__).resolve().parent
-    for name in ("ocr.py", "glyph_probe.py", "symbols.py"):
+    for name in ("ocr.py", "glyph_probe.py", "symbols.py", "boards.py"):
         h.update((here / name).read_bytes())
     try:
         h.update(subprocess.run(["tesseract", "--version"], check=False, capture_output=True,
@@ -1029,6 +1034,22 @@ def figurines_path(cache_path):
     return cache_path.with_name(f"{cache_path.stem}-figurinas.json")
 
 
+def pieces_path(cache_path):
+    """Peças dos diagramas confirmadas pelo usuário (``ocr.json`` → ``ocr-pecas.json``)."""
+    return cache_path.with_name(f"{cache_path.stem}-pecas.json")
+
+
+def diagrams_path(cache_path):
+    """Posições corrigidas ou confirmadas pelo usuário, por diagrama (``ocr-diagramas.json``)."""
+    return cache_path.with_name(f"{cache_path.stem}-diagramas.json")
+
+
+def _read_json(path, default):
+    import json
+
+    return json.loads(path.read_text(encoding="utf-8")) if path is not None and path.exists() else default
+
+
 def symbols_path(cache_path):
     """Símbolos confirmados pelo usuário (``ocr.json`` → ``ocr-simbolos.json``)."""
     return cache_path.with_name(f"{cache_path.stem}-simbolos.json")
@@ -1053,11 +1074,21 @@ def _save_pages(path, key: str, results: dict[int, OcrPage], groups: list[dict],
         out[p] = {"blocks": blocks, "boards": res.boards, "suffixes": symbols.page_entries(res.suffixes, res.glyphs),
                   "stats": {"words": res.words, "low_confidence": res.low_confidence, "pieces": res.pieces,
                             "pieces_uncertain": res.pieces_uncertain, "second_pass": res.second_pass}}
+    from app.extraction import boards as board_reader
+
+    shapes = [sh for res in results.values() for shapes, _ in res.diagrams for sh in shapes if sh is not None]
+    pgroups = [board_reader.group_json(g) for g in board_reader.group_shapes(shapes)]
+    pconfirmed = board_reader.inherit(pgroups, _read_json(pieces_path(path) if path else None, []))
+    for p, res in results.items():
+        out[p]["diagrams"] = board_reader.page_entries(res.diagrams, res.boards)
     out = json.loads(json.dumps(out))  # mesmo formato vindo do cache ou da leitura (listas no lugar de tuplas)
     symbols.apply_to_pages(out, symbols.resolved(sgroups, confirmed))
+    board_reader.apply_to_pages(out, board_reader.resolved(pgroups, pconfirmed),
+                                _read_json(diagrams_path(path) if path else None, {}))
     if path is not None:
         _write_cache(path, {"version": key, "pages": out, "figurine_groups": groups, "labels": labels,
-                            "symbol_groups": sgroups, "symbol_labels": confirmed})
+                            "symbol_groups": sgroups, "symbol_labels": confirmed,
+                            "piece_groups": pgroups, "piece_labels": pconfirmed})
     return {int(k): v for k, v in out.items()}
 
 
@@ -1068,6 +1099,60 @@ def _write_cache(path, data: dict) -> None:
     tmp = path.with_name(path.name + ".tmp")
     tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
     os.replace(tmp, path)
+
+
+def relabel_pieces(cache, labels: dict[str, str]) -> dict:
+    """Grava as peças confirmadas dos diagramas (grupo → letra FEN; "" = casa vazia) e refaz as posições,
+    sem refazer o OCR. Devolve {"diagrams", "complete", "confirmed"}."""
+    import json
+    from pathlib import Path
+
+    from app.extraction import boards
+
+    path = Path(cache)
+    stored = json.loads(path.read_text(encoding="utf-8"))
+    groups = {str(g["id"]): g for g in stored.get("piece_groups") or []}
+    for gid, label in labels.items():
+        if gid not in groups:
+            raise ValueError(f"grupo de peça inexistente: {gid}")
+        if label not in ("", *boards.PIECE_CHARS):
+            raise ValueError(f"peça inválida: {label!r}")
+    confirmed = {**(stored.get("piece_labels") or {}), **labels}
+    old = _read_json(pieces_path(path), [])
+    chosen = [{"label": confirmed[gid], "vec": g["vec"], "black": g["black"]}
+              for gid, g in groups.items() if gid in confirmed]
+    kept = [c for c in old if not any(c["vec"] == n["vec"] for n in chosen)]
+    pieces_path(path).write_text(json.dumps(chosen + kept, ensure_ascii=False), encoding="utf-8")
+    result = boards.apply_to_pages(stored["pages"], boards.resolved(list(groups.values()), confirmed),
+                                   _read_json(diagrams_path(path), {}))
+    stored["piece_labels"] = confirmed
+    _write_cache(path, stored)
+    return result
+
+
+def set_diagram(cache, page: int, index: int, placement: str | None, side: str | None, confirmed: bool) -> dict:
+    """Posição de um diagrama corrigida ou confirmada pelo usuário; devolve o diagrama atualizado."""
+    import json
+    from pathlib import Path
+
+    from app.extraction import boards
+
+    path = Path(cache)
+    stored = json.loads(path.read_text(encoding="utf-8"))
+    page_data = stored["pages"].get(str(page))
+    if page_data is None or not 0 <= index < len(page_data.get("diagrams", [])):
+        raise ValueError(f"diagrama inexistente: p{page}-{index}")
+    if placement is not None and not boards.FEN_RE.match(placement):
+        raise ValueError("posição inválida: use o campo de posição da FEN (ex.: r1bqkbnr/pppp1ppp/…)")
+    if side not in (None, "w", "b"):
+        raise ValueError("vez de jogar: w ou b")
+    overrides = _read_json(diagrams_path(path), {})
+    overrides[f"{page}-{index}"] = {"placement": placement, "side": side, "confirmed": confirmed}
+    diagrams_path(path).write_text(json.dumps(overrides, ensure_ascii=False), encoding="utf-8")
+    groups = stored.get("piece_groups") or []
+    boards.apply_to_pages(stored["pages"], boards.resolved(groups, stored.get("piece_labels") or {}), overrides)
+    _write_cache(path, stored)
+    return stored["pages"][str(page)]["diagrams"][index]
 
 
 def relabel_symbols(cache, labels: dict[str, str]) -> dict:

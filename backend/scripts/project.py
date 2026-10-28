@@ -9,6 +9,7 @@ Uso (a partir de backend/):
     .venv/bin/python -m scripts.project sync ID                      # depois de atualizar o código
     .venv/bin/python -m scripts.project figurines ID [--labels '{"3": "♕"}']  # figurinas do livro (OCR)
     .venv/bin/python -m scripts.project symbols ID [--labels '{"7": "?"}']    # símbolos do livro (OCR)
+    .venv/bin/python -m scripts.project pieces ID [--labels '{"4": "q"}']     # peças dos diagramas (OCR)
     .venv/bin/python -m scripts.project audit ID                     # integridade do livro inteiro
     .venv/bin/python -m scripts.project backup ID [--dest PASTA]     # .zip com manifesto e sha256
     .venv/bin/python -m scripts.project restore ARQUIVO.zip [--como NOVO_ID]
@@ -105,7 +106,10 @@ def main() -> None:
     sy = sub.add_parser("symbols", help="símbolos depois dos lances (†, ±, ?!…); com --labels, reescreve os lances")
     sy.add_argument("id")
     sy.add_argument("--labels", help='JSON {grupo: símbolo}; "" = não é símbolo')
-    for q in (y, f, sy):
+    pc = sub.add_parser("pieces", help="peças dos diagramas digitalizados; com --labels, refaz as posições")
+    pc.add_argument("id")
+    pc.add_argument("--labels", help='JSON {grupo: letra FEN (KQRBNP brancas, kqrbnp pretas)}; "" = casa vazia')
+    for q in (y, f, sy, pc):
         q.add_argument("--progress", type=Path, help="andamento em JSON (usado pela interface)")
         q.add_argument("--result", type=Path, help="resultado em JSON (usado pela interface)")
         q.add_argument("--author", default=os.environ.get("USER", "linha de comando"))
@@ -170,9 +174,24 @@ def main() -> None:
             raise SystemExit(f"montagem {done.state}: {done.error} (ver {store.dir / 'output' / 'montagem.log'})")
         print(json.dumps(done.summary, ensure_ascii=False))
         print(f"PDF traduzido em {store.dir / 'output' / 'traduzido.pdf'}")
-    elif args.cmd in ("sync", "figurines", "symbols"):
+    elif args.cmd in ("sync", "figurines", "symbols", "pieces"):
         progress = progress_writer(args.progress)
         reread = {}
+        if args.cmd == "pieces":
+            from app.extraction.ocr import relabel_pieces
+            from app.store.reprocess import pieces_info
+
+            if args.labels is None:
+                info = pieces_info(store)
+                if not info["available"]:
+                    raise SystemExit(info["reason"])
+                for g in info["groups"]:
+                    label = info["labels"].get(str(g["id"]))
+                    print(f"grupo {g['id']:>4}: {g['count']:>5} · {'preta' if g['black'] else 'branca'} · "
+                          f"sugestão {g['auto'] or '-'}" + (f" · confirmado {label!r}" if label is not None else ""))
+                return
+            reread = relabel_pieces(store.dir / "ocr.json", json.loads(args.labels))
+            print(f"posições: {reread}")
         if args.cmd == "symbols":
             from app.extraction.ocr import relabel_symbols
             from app.store.reprocess import symbols_info

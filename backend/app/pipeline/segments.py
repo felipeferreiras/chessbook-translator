@@ -11,6 +11,8 @@ import re
 from collections import Counter
 from dataclasses import dataclass
 
+from app.chess.notation import MoveStatus
+from app.chess.notation.validate import ContextSource
 from app.translation.service import SourceSegment
 
 from .notation_pass import DocumentNotation, Region
@@ -18,6 +20,7 @@ from .sections import SectionInfo, assign_sections
 
 # Marcas ao lado do diagrama: vez de jogar ("W", "B?") e tipo de exercício ("Play"). Não são traduzidas:
 # o modelo as trocava de forma inconsistente ("W?" virou "As brancas?" e até "B?", que muda o sentido).
+_CHECK_WARNINGS = {"check_marker_without_check", "missing_check_marker", "mate_marker_without_mate"}
 # bloco curto ilegível do OCR (rótulo, coordenada, marca): fica como na imagem sem pedir conferência
 OCR_SHORT_MARK = "ocr: texto curto lido sem confiança"
 DIAGRAM_LABEL = re.compile(r"^(?:[WB][?!]*|Play|Draw|Win)(?:\s+(?:[WB][?!]*|Play|Draw|Win))*$")
@@ -55,8 +58,24 @@ class BookSegment:
 
     @property
     def flags(self) -> list[str]:
-        """Dúvidas sobre o texto de origem (OCR): o segmento pede conferência antes da aprovação."""
-        return list(self.region.source_flags)
+        """Dúvidas sobre o texto de origem (OCR): o segmento pede conferência antes da aprovação.
+
+        Num livro digitalizado, também o lance que a posição do diagrama desmente (lance impossível,
+        sinal de xeque sem xeque ou xeque sem sinal): costuma ser casa ou símbolo mal lido.
+        """
+        flags = list(self.region.source_flags)
+        analysis = self.region.analysis
+        if not flags or analysis is None:
+            return flags
+        for m in analysis.moves:
+            if m.context not in (ContextSource.FEN_PROPOSED, ContextSource.FEN_CONFIRMED, ContextSource.CONTINUATION):
+                continue
+            if m.status == MoveStatus.ILLEGAL:
+                flags.append(f"ocr_lance_impossivel: '{m.atom.text}' não é possível na posição do diagrama")
+            elif m.status == MoveStatus.VALIDATED and set(m.warnings) & _CHECK_WARNINGS:
+                flags.append(f"ocr_sinal_de_xeque: '{m.atom.text}' — o sinal de xeque não confere com a posição"
+                             " (± lido como +, ou † perdido?)")
+        return flags
 
     def source(self) -> SourceSegment:
         r = self.region

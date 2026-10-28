@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, ApiError, GlossaryEntry, Project, Segment, Selection, Settings, Version } from "./api";
+import { api, ApiError, DiagramInfo, GlossaryEntry, Project, Segment, Selection, Settings, Version } from "./api";
 import ProjectView from "./ProjectView";
 import QualityView from "./QualityView";
 import TranslateView from "./TranslateView";
@@ -169,15 +169,18 @@ function PageView(props: { project: Project; page: number; author: string; onlyA
   const [segments, setSegments] = useState<Segment[]>([]);
   const [showImages, setShowImages] = useState(() => loadPref("images", "1") === "1");
   const [pageMessage, setPageMessage] = useState("");
+  const [diagrams, setDiagrams] = useState<DiagramInfo[]>([]);
 
   useEffect(() => {
     api.segments(project.id, page).then(setSegments);
+    api.diagrams(project.id, page).then(setDiagrams, () => setDiagrams([]));
   }, [project.id, page]);
 
   const approvePage = async () => {
     try {
       const r = await api.approvePage(project.id, page, props.author);
       setSegments(await api.segments(project.id, page));
+      setDiagrams(await api.diagrams(project.id, page));
       props.onChange();
       setPageMessage(`${r.approved.length} aprovados` + (r.skipped.length
         ? `; ${r.skipped.length} ficaram de fora (recusados pela proteção, com falha ou sem tradução)` : "."));
@@ -186,7 +189,8 @@ function PageView(props: { project: Project; page: number; author: string; onlyA
     }
   };
   const pending = segments.some((s) => !s.approved && (s.current || s.kept_as_image)
-                                        && s.status !== "needs_review" && s.status !== "failed");
+                                        && s.status !== "needs_review" && s.status !== "failed")
+    || diagrams.some((d) => !d.confirmed && d.placement && !d.issues.length);
 
   const replace = (s: Segment) => {
     setSegments((list) => list.map((x) => (x.id === s.id ? s : x)));
@@ -225,12 +229,94 @@ function PageView(props: { project: Project; page: number; author: string; onlyA
           </figure>
         </div>
       )}
-      {shown.length === 0 && <p className="muted">Nada a revisar nesta página com o filtro atual.</p>}
+      {diagrams.filter((d) => !props.onlyAttention || d.needs_attention).map((d) => (
+        <DiagramCard key={d.id} projectId={project.id} diagram={d} author={props.author}
+                     onSaved={(x) => { setDiagrams((list) => list.map((y) => (y.id === x.id ? x : y))); props.onChange(); }} />
+      ))}
+      {shown.length === 0 && !diagrams.length && <p className="muted">Nada a revisar nesta página com o filtro atual.</p>}
       {shown.map((s) => (
         <SegmentCard key={s.id} projectId={project.id} segment={s} author={props.author} onSaved={replace}
                      onRetranslate={props.onRetranslate} />
       ))}
     </section>
+  );
+}
+
+const GLYPH: Record<string, string> = { K: "♔", Q: "♕", R: "♖", B: "♗", N: "♘", P: "♙",
+                                        k: "♚", q: "♛", r: "♜", b: "♝", n: "♞", p: "♟" };
+const PLACEMENT_RE = /^[KQRBNPkqrbnp1-8]+(\/[KQRBNPkqrbnp1-8]+){7}$/;
+
+/** Tabuleiro desenhado a partir do campo de posição da FEN (casas a8…h1). */
+function Board(props: { placement: string }) {
+  const cells: string[] = [];
+  for (const row of props.placement.split("/")) {
+    for (const ch of row) {
+      if (/\d/.test(ch)) for (let i = 0; i < Number(ch); i++) cells.push("");
+      else cells.push(GLYPH[ch] ?? "?");
+    }
+  }
+  return (
+    <div className="board" role="img" aria-label={`posição ${props.placement}`}>
+      {cells.slice(0, 64).map((c, i) => (
+        <span key={i} className={(Math.floor(i / 8) + i) % 2 ? "dark" : "light"}>{c}</span>
+      ))}
+    </div>
+  );
+}
+
+/** Diagrama digitalizado: a imagem, a posição lida (ou corrigida) e a confirmação. */
+function DiagramCard(props: { projectId: string; diagram: DiagramInfo; author: string;
+                              onSaved: (d: DiagramInfo) => void }) {
+  const d = props.diagram;
+  const [placement, setPlacement] = useState(d.placement ?? d.read ?? "");
+  const [side, setSide] = useState<string>(d.side_to_move ?? "");
+  const [message, setMessage] = useState("");
+  const valid = PLACEMENT_RE.test(placement);
+  const changed = placement !== (d.placement ?? "") || side !== (d.side_to_move ?? "");
+  const save = async () => {
+    setMessage("");
+    try {
+      const x = await api.setDiagram(props.projectId, d.page, d.index, changed ? placement : null,
+                                     side || null, props.author);
+      props.onSaved(x);
+      setMessage("Posição confirmada. Os avisos dos lances mudam na próxima sincronização (aba Projeto).");
+    } catch (e) {
+      setMessage(e instanceof Error ? e.message : String(e));
+    }
+  };
+  return (
+    <article className={`segment diagram${d.confirmed ? " approved" : ""}${d.needs_attention ? " attention" : ""}`}>
+      <header>
+        <code>{d.id}</code>
+        <span className="section">diagrama</span>
+        {d.confirmed && <span className="chip ok">posição confirmada</span>}
+      </header>
+      <div className="columns">
+        <img src={api.diagramImage(props.projectId, d.page, d.index)} alt={`Diagrama ${d.id}, original`} />
+        <div>
+          {valid ? <Board placement={placement} /> : <p className="muted">Posição incompleta: corrija abaixo.</p>}
+          <label className="small">Posição (FEN, de a8 a h1)
+            <input value={placement} onChange={(e) => setPlacement(e.target.value.trim())} spellCheck={false}
+                   aria-label={`Posição do diagrama ${d.id}`} />
+          </label>
+          <label className="small">Vez de jogar{" "}
+            <select value={side} onChange={(e) => setSide(e.target.value)}>
+              <option value="">não sei</option>
+              <option value="w">brancas (△)</option>
+              <option value="b">pretas (▼)</option>
+            </select>
+          </label>
+        </div>
+      </div>
+      {d.issues.length > 0 && <ul className="problems">{d.issues.map((x) => <li key={x}>{x}</li>)}</ul>}
+      <footer>
+        <button disabled={!valid || !side || !props.author.trim() || (d.confirmed && !changed)} onClick={save}>
+          {changed ? "Salvar e confirmar posição" : "Confirmar posição"}
+        </button>
+        {d.read && placement !== d.read && <button onClick={() => setPlacement(d.read ?? "")}>Voltar à lida</button>}
+        {message && <span className="muted" role="status">{message}</span>}
+      </footer>
+    </article>
   );
 }
 

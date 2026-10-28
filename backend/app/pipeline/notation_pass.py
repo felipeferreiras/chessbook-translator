@@ -8,6 +8,7 @@ lances com seu estado de validação e as posições propostas dos diagramas.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 
 import pymupdf
@@ -413,10 +414,14 @@ def collect(doc: pymupdf.Document, pages: range | None = None, ocr_cache=None, o
         ocr = scanned.get(pno + 1)
         if ocr is not None:
             blocks = ocr["blocks"]
-            for box in ocr["boards"]:  # o diagrama inteiro: tabuleiro, coordenadas e marcas em volta
+            read = ocr.get("diagrams") or [{} for _ in ocr["boards"]]
+            for box, d in zip(ocr["boards"], read, strict=True):  # o diagrama inteiro: tabuleiro e o que há em volta
                 box = tuple(max(0.0, v) for v in diagram_area(tuple(box)))
-                result.diagrams.append(Diagram(pno + 1, tuple(round(v, 1) for v in box), DiagramReading(
-                    None, ["imagem: a posição do diagrama não é lida em páginas digitalizadas"])))
+                # posição lida pelas peças de cada casa (ou corrigida pelo usuário); sem ela, nada é presumido
+                reading = DiagramReading(d.get("placement"), list(d.get("issues", ["posição não lida"])))
+                side = d.get("side_to_move")
+                result.diagrams.append(Diagram(pno + 1, tuple(round(v, 1) for v in box), reading,
+                                               white_to_move=None if side is None else side == "w"))
         else:
             blocks = [b for b in page.get_text("dict")["blocks"] if b["type"] == 0]
         labels: list[tuple[pymupdf.Rect, str]] = []
@@ -487,6 +492,40 @@ def _running_heads(regions: list[Region]) -> None:
             r.role = "text"
 
 
+_SOLUTION_RE = re.compile(r"^(\d{1,3})\.\s+[A-Z][^\n]{0,60}?\s[—–-]\s")
+
+
+def _exercise_links(events: list[tuple[tuple, str, object]]) -> dict[int, Diagram]:
+    """Solução "N. Fulano — Beltrano, Lugar Ano" → diagrama do exercício N.
+
+    Os exercícios de um capítulo vêm antes das soluções, numerados de 1 a K;
+    as soluções, na mesma ordem. Cada sequência de soluções (números
+    crescentes, recomeçando em 1) se liga aos K diagramas logo antes dela.
+    """
+    out: dict[int, Diagram] = {}
+    runs: list[tuple[int, list[tuple[int, Region]]]] = []  # (posição do primeiro, [(N, região)])
+    for pos, (_key, kind, item) in enumerate(events):
+        if kind != "region":
+            continue
+        m = _SOLUTION_RE.match(item.resolved.text)  # type: ignore[union-attr]
+        if not m:
+            continue
+        n = int(m.group(1))
+        if runs and n > runs[-1][1][-1][0] and n <= runs[-1][1][-1][0] + 3:
+            runs[-1][1].append((n, item))  # type: ignore[arg-type]
+        elif n == 1:
+            runs.append((pos, [(n, item)]))  # type: ignore[list-item]
+    for start, sols in runs:
+        k = sols[-1][0]
+        before = [item for _key, kind, item in events[:start] if kind == "diagram"]
+        if len(before) < k:
+            continue
+        diagrams = before[-k:]
+        for n, region in sols:
+            out[id(region)] = diagrams[n - 1]  # type: ignore[assignment]
+    return out
+
+
 def _following_diagram(events: list[tuple[tuple, str, object]], pos: int, key: tuple, style: LexStyle) -> str | None:
     """FEN do próximo diagrama na mesma página e coluna, se nenhum lance vier antes dele."""
     for other_key, kind, item in events[pos + 1:]:
@@ -521,13 +560,26 @@ def validate(result: DocumentNotation) -> None:
     for d in result.diagrams:
         events.append(((d.page, 0 if d.bbox[0] < 255 else 1, (d.bbox[1] + d.bbox[3]) / 2, 0), "diagram", d))
     events.sort(key=lambda e: e[0])
+    # Livro digitalizado: a posição só vale onde é certa. A de um diagrama vale para o texto abaixo dele,
+    # na mesma página e coluna; a solução "N. Fulano — Beltrano" vale a do exercício N (os K diagramas
+    # logo antes da sequência de soluções 1..K) até a próxima solução, mesmo em outra página.
+    scanned = any(OCR_FLAG in r.source_flags for r in result.regions)
+    exercises = _exercise_links(events) if scanned else {}
     ctx = Context.unknown()
+    origin: tuple | None = None  # (página, coluna) de onde veio a posição; None = solução (segue)
     for pos, (key, kind, item) in enumerate(events):
         if kind == "diagram":
             fen = item.fen  # type: ignore[union-attr]
             ctx = Context.from_proposed_fen(fen) if fen else Context.unknown()
+            origin = key[:2]
             continue
         region: Region = item  # type: ignore[assignment]
+        if scanned:
+            if id(region) in exercises:
+                fen = exercises[id(region)].fen
+                ctx, origin = (Context.from_proposed_fen(fen) if fen else Context.unknown()), None
+            elif origin is not None and origin != key[:2]:
+                ctx = Context.unknown()
         region.analysis = analyze_region(
             region.resolved.text, ctx, result.convention, style=result.style, main_mask=region.main_mask
         )

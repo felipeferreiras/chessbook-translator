@@ -24,7 +24,8 @@ from .project_store import ProjectStore, StoreError, _now
 
 BACKEND = Path(__file__).resolve().parents[2]
 KINDS = {"sync": "sincronizar com a versão atual", "figurines": "reler com as figurinas confirmadas",
-         "symbols": "reescrever os lances com os símbolos confirmados"}
+         "symbols": "reescrever os lances com os símbolos confirmados",
+         "pieces": "refazer as posições dos diagramas com as peças confirmadas"}
 _procs: dict[str, subprocess.Popen] = {}
 
 
@@ -59,6 +60,15 @@ def start(store: ProjectStore, kind: str, author: str, labels: dict[str, str] | 
         bad = {k: v for k, v in labels.items() if v and v not in WHITE_FIGURINES}
         if bad or not all(str(k).isdigit() for k in labels):
             raise StoreError(f"figurina inválida: {bad or labels}")
+        cmd += ["--labels", json.dumps(labels, ensure_ascii=False)]
+    if kind == "pieces":
+        from app.extraction.boards import PIECE_CHARS
+
+        if not labels:
+            raise StoreError("nenhuma peça informada")
+        bad = {k: v for k, v in labels.items() if v not in ("", *PIECE_CHARS)}
+        if bad or not all(str(k).isdigit() for k in labels):
+            raise StoreError(f"peça inválida: {bad or labels}")
         cmd += ["--labels", json.dumps(labels, ensure_ascii=False)]
     if kind == "symbols":
         from app.extraction.symbols import VALID_LABEL
@@ -139,3 +149,40 @@ def symbols_info(store: ProjectStore) -> dict:
     keep = ("id", "count", "auto", "score", "margin", "read", "image")
     return {"available": True, "reason": "", "labels": stored.get("symbol_labels") or {},
             "groups": [{k: g[k] for k in keep} for g in sorted(groups, key=lambda g: -g["count"])]}
+
+
+def pieces_info(store: ProjectStore) -> dict:
+    """As peças dos diagramas digitalizados, agrupadas pelo desenho, com a sugestão e a confirmada."""
+    path = store.dir / "ocr.json"
+    if not path.exists():
+        return {"available": False, "reason": "o livro não foi lido por OCR", "groups": [], "labels": {}}
+    stored = json.loads(path.read_text(encoding="utf-8"))
+    groups = stored.get("piece_groups")
+    if groups is None:
+        return {"available": False, "groups": [], "labels": {},
+                "reason": "OCR feito por uma versão anterior: sincronize com a versão atual primeiro"}
+    if not groups:
+        return {"available": False, "reason": "nenhum diagrama no livro", "groups": [], "labels": {}}
+    keep = ("id", "count", "black", "auto", "score", "margin", "image")
+    return {"available": True, "reason": "", "labels": stored.get("piece_labels") or {},
+            "groups": [{k: g[k] for k in keep} for g in sorted(groups, key=lambda g: -g["count"])]}
+
+
+def diagrams(store: ProjectStore, page: int | None = None) -> list[dict]:
+    """Diagramas digitalizados (de uma página ou do livro): posição lida, problemas, confirmação."""
+    path = store.dir / "ocr.json"
+    if not path.exists():
+        return []
+    pages = json.loads(path.read_text(encoding="utf-8"))["pages"]
+    out = []
+    for p, data in sorted(pages.items(), key=lambda kv: int(kv[0])):
+        if page is not None and int(p) != page:
+            continue
+        for i, d in enumerate(data.get("diagrams", [])):
+            if "issues" not in d:
+                continue
+            needs = not d["confirmed"] and (d["placement"] is None or bool(d["issues"]))
+            out.append({"id": f"d{p}-{i}", "page": int(p), "index": i, "board": d["board"],
+                        "placement": d["placement"], "read": d.get("read"), "side_to_move": d["side_to_move"],
+                        "issues": d["issues"], "confirmed": d["confirmed"], "needs_attention": needs})
+    return out
