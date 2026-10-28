@@ -30,8 +30,10 @@ Para traduzir, edite o `.env`: `CHESSBOOK_PRIVACY_MODE=remote_allowed` e
 * **Projeto**: envio do PDF; o original é copiado e conferido pelo sha256 em
   toda operação. Livros digitalizados passam por OCR com as figurinas
   reconhecidas pelo desenho (protótipos aprendidos no próprio livro e
-  confirmados pelo usuário na tela "Figurinas do livro"); diagramas achados
-  pela moldura e preservados com coordenadas e marcas.
+  confirmados pelo usuário na tela "Figurinas do livro"); símbolos (†, ±, ⩲,
+  ?!, promoção) e posições dos diagramas reconhecidos pelo desenho e
+  confirmados por grupos; original corrigível antes de traduzir; diagramas
+  preservados com coordenadas e marcas.
 * **Notação**: lances em inglês, português e figurinas (FAN), inclusive fontes
   de figurinas com letras trocadas; validação com python-chess, encadeada
   entre parágrafos e diagramas; nada é presumido.
@@ -62,6 +64,8 @@ cd backend
 .venv/bin/python -m scripts.project audit ID                   # integridade do livro inteiro
 .venv/bin/python -m scripts.project sync ID                    # depois de atualizar o programa
 .venv/bin/python -m scripts.project figurines ID [--labels JSON] # figurinas de um livro digitalizado
+.venv/bin/python -m scripts.project symbols ID [--labels JSON]   # símbolos depois dos lances (†, ±, ?!)
+.venv/bin/python -m scripts.project pieces ID [--labels JSON]    # peças dos diagramas digitalizados
 .venv/bin/python -m scripts.project backup ID                  # .zip com manifesto e sha256
 .venv/bin/python -m scripts.project restore ARQUIVO.zip [--como NOVO_ID]
 .venv/bin/python -m scripts.evaluate_ocr LIVRO.pdf --pages 21-30  # mede o OCR contra um PDF digital
@@ -76,7 +80,7 @@ controle de versão). Tradução em paralelo: `CHESSBOOK_TRANSLATION_WORKERS`
 ```bash
 cd backend
 uv pip install --python .venv/bin/python -e ".[dev]"
-.venv/bin/python -m pytest -q        # 332 testes
+.venv/bin/python -m pytest -q        # 349 testes
 .venv/bin/ruff check app tests scripts
 cd ../frontend && npm run build      # tsc + vite
 ```
@@ -88,7 +92,7 @@ real entra no repositório.
 
 * [Manual](docs/manual.md) · [Limitações conhecidas](docs/limitacoes.md) · [Segurança](docs/quality/seguranca.md)
 * `docs/plano-execucao.md`: as fases e o que cada uma entregou
-* `docs/research/`: investigação e relatórios de cada fase (01–15; 15 = livro digitalizado real)
+* `docs/research/`: investigação e relatórios de cada fase (01–16; 15 e 16 = livro digitalizado real)
 * `docs/architecture/`: arquitetura e tradução
 * `docs/decisions/`: ADRs 0001–0007
 * `docs/quality/`: critérios de aceitação, plano de testes, definição da POC

@@ -293,7 +293,7 @@ function GroupsPanel(props: { kind: "figurines" | "symbols" | "pieces"; projectI
                   </select>
                   <small>
                     {g.count} {text.unit}
-                    {props.kind === "pieces" ? ` · ${g.black ? "preta" : "branca"}` : ` · OCR leu “${read.join(" ") || "?"}”`}
+                    {props.kind === "pieces" ? "" : ` · OCR leu “${read.join(" ") || "?"}”`}
                     {doubtful ? (figurines ? " · sugestão incerta" : " · sem sugestão") : ""}
                   </small>
                 </li>
