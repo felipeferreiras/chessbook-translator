@@ -330,6 +330,7 @@ class ProjectStore:
                     report["obsolete"] += 1
                 else:
                     db.execute("DELETE FROM segment WHERE id=?", (oid,))
+                    db.execute("DELETE FROM job_segment WHERE segment_id=?", (oid,))
                     report["removed"] += 1
             renames = {o: n for n, o in match.items() if o != n}
             for o in renames:  # em duas etapas: os ids novos podem coincidir com antigos ainda não renomeados
@@ -384,6 +385,9 @@ class ProjectStore:
         return report
 
     def _rename(self, db: sqlite3.Connection, old: str, new: str) -> None:
+        # o nome novo está livre: registro de tarefa com ele é de um segmento já apagado (projetos de
+        # versões que não limpavam ao apagar); senão, renomear para ele violava a chave da tarefa
+        db.execute("DELETE FROM job_segment WHERE segment_id=?", (new,))
         db.execute("UPDATE segment SET id=? WHERE id=?", (new, old))
         db.execute("UPDATE translation SET segment_id=? WHERE segment_id=?", (new, old))
         db.execute("UPDATE job_segment SET segment_id=? WHERE segment_id=?", (new, old))

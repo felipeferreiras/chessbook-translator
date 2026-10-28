@@ -275,3 +275,26 @@ def test_ocr_junk_can_be_discarded_and_stays_out_after_sync(bare):
     assert exported["p1-1"]["status"] == "discarded" and exported["p1-1"]["text"] is None
     assert not bare.discard("p1-1", "revisor", False).discarded
     assert [s.id for _, s in bare.sources({1})] == ["p1-0", "p1-1", "p1-2"]
+
+
+def test_sync_renames_over_stale_job_records(bare):
+    """Um segmento traduzido por uma tarefa e depois apagado deixava o registro da tarefa; renomear
+    outro segmento para o mesmo id quebrava a sincronização (UNIQUE job_segment.job_id, segment_id)."""
+    bare.add_book_segments([{"id": "p1-0", "page": 1, "source": "First."},
+                            {"id": "p1-1", "page": 1, "source": "Second."}])
+    with bare._db() as db:
+        db.execute("INSERT INTO job (engine, model, pages, state, budget, author, created_at)"
+                   " VALUES ('fake','m','1','done',0,'t','now')")
+        job = db.execute("SELECT MAX(id) FROM job").fetchone()[0]
+        db.execute("INSERT INTO job_segment VALUES (?,?,?)", (job, "p1-0", "failed"))
+        db.execute("INSERT INTO job_segment VALUES (?,?,?)", (job, "p1-1", "failed"))
+    # "First." some (apagado, sem tradução); "Second." passa a ser p1-0
+    report = bare.sync_segments([{"id": "p1-0", "page": 1, "source": "Second."}], "teste")
+    assert report["renamed"] == 1 and report["removed"] == 1
+    assert [s.source for s in bare.segments()] == ["Second."]
+    # projeto de uma versão anterior: o registro do segmento apagado ficou para trás
+    with bare._db() as db:
+        db.execute("INSERT INTO job_segment VALUES (?,?,?)", (job, "p1-1", "failed"))
+    bare.sync_segments([{"id": "p1-0", "page": 1, "source": "Intro."},
+                        {"id": "p1-1", "page": 1, "source": "Second."}], "teste")
+    assert [s.source for s in bare.segments()] == ["Intro.", "Second."]
