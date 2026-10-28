@@ -42,7 +42,7 @@ WHITE_FIGURINES = "♔♕♖♗♘"
 # Lance com peça: [número][peça][desambiguação][captura]casa[promoção][sinais]. A "peça" é qualquer
 # caractere que não seja coluna, dígito ou espaço: o Tesseract troca figurinas por símbolos e letras.
 MOVE_RE = re.compile(
-    r"^(?P<num>\d{1,3}\s?\.{0,3}\s?(?:\.\.\.)?)?(?P<piece>[^\sa-h0-9()\[\],;:.!?+#=\-–—])"
+    r"^(?P<num>\d{1,3}\s?\.{0,3}\s?(?:\.\.\.)?)?(?P<piece>[^\sa-h0-9()\[\],;:.!?+#=\-–—x×])"
     r"(?P<rest>[a-h]?[1-8]?[x:×]?[a-h][1-8](?:=?[QRBN♕♖♗♘])?[+#‡†]?[!?]{0,2}[,;.)]?)$")
 
 
@@ -287,27 +287,48 @@ class PieceCandidate:
     margin: float = 0.0
     confident: bool = False
     cluster: int = -1
+    strip: np.ndarray | None = None  # o trecho de tinta (pode ter a captura colada)
+    word: object = None
+    x0: int = 0  # onde o trecho começa na página (pixels)
 
 
-def _piece_crop(gray: np.ndarray, word: OcrWord, line: OcrLine, k: int) -> tuple[np.ndarray, int] | None:
-    """O primeiro desenho largo depois do número do lance (colunas de tinta contíguas) e onde ele termina.
+def _piece_crop(gray: np.ndarray, word: OcrWord, line: OcrLine, k: int,
+                by_box: bool = True) -> tuple[np.ndarray, int] | None:
+    """O trecho de tinta da peça (logo depois do número do lance) e onde ele termina, em pixels.
 
-    Pontos e parênteses (desenhos estreitos) são pulados. A caixa do último
-    caractere do número não é confiável: o Tesseract às vezes estica o ponto
-    final por cima da figurina que não conseguiu ler.
+    Pelo trecho contínuo de tinta sob a caixa do caractere da peça. Pode vir colado ao "x" da
+    captura ou à letra da casa (negrito: "♗xe5", "♕d3"); quem separa é ``fit_template``, pela largura
+    real das figurinas do livro. As caixas do Tesseract não servem para cortar: no negrito vêm
+    deslocadas (a do "f" de "21.♘f5" começa no meio do cavalo), e a do ponto do número às vezes
+    cobre o começo da figurina.
     """
     size = max(1.0, line.size_px)
-    x0 = word.bbox[0]
-    for i in range(min(k, len(word.chars)) - 1, -1, -1):
-        if word.chars[i].bbox[2] - word.chars[i].bbox[0] < 0.5 * size:
-            x0 = word.chars[i].bbox[2] + 1
-            break
     y0, y1 = line.bbox[1], line.bbox[3]
-    # a caixa do ponto às vezes cobre o começo da figurina: volta até o começo do desenho
-    while x0 > word.bbox[0] and (gray[y0:y1, x0 - 1] < 128).any() and (gray[y0:y1, x0] < 128).any():
-        x0 -= 1
-    ink = gray[y0:y1, x0:word.bbox[2]] < 128
-    cols = ink.any(axis=0)
+    chars = word.chars
+    if by_box and len(chars) == len(word.text) and k < len(chars):
+        # limiar mais claro que o da tinta: em página gasta, a borda da dama sai cinza e o trecho partia
+        ink = (gray[y0:y1, :] < 160).any(axis=0)
+        box = chars[k].bbox
+        center = (box[0] + box[2]) // 2
+        hits = [c for c in range(box[0], box[2] + 1) if 0 <= c < ink.size and ink[c]]
+        if hits:
+            c = min(hits, key=lambda x: abs(x - center))
+            start, end = c, c
+            # a caixa da palavra às vezes começa no meio da figurina: pode passar um pouco dela
+            while start > max(0, word.bbox[0] - int(0.6 * size)) and ink[start - 1]:
+                start -= 1
+            while end + 1 < min(ink.size, word.bbox[2] + 1) and ink[end + 1]:
+                end += 1
+            if end + 1 - start >= 0.3 * size:
+                return gray[y0:y1, start:end + 1], end + 1
+    # sem caixas por caractere (ou ``by_box=False``): o primeiro desenho largo depois do número (pontos e
+    # parênteses pulados)
+    x0 = word.bbox[0]
+    for i in range(min(k, len(chars)) - 1, -1, -1):
+        if chars[i].bbox[2] - chars[i].bbox[0] < 0.5 * size:
+            x0 = chars[i].bbox[2] + 1
+            break
+    cols = (gray[y0:y1, x0:word.bbox[2]] < 128).any(axis=0)
     i = 0
     while i < cols.size:
         if not cols[i]:
@@ -317,16 +338,52 @@ def _piece_crop(gray: np.ndarray, word: OcrWord, line: OcrLine, k: int) -> tuple
         while i + 1 < cols.size and cols[i + 1]:
             i += 1
         if i + 1 - start >= 0.3 * size:
-            end = i + 1
-            if end - start > 1.25 * size:
-                # figurina colada no "x" ou na casa ("♕xf6"): corta na coluna de menos tinta onde a
-                # figurina acaba, senão o grupo vira "♕xf6" e pintar a letra apagava a captura
-                lo, hi = start + int(0.6 * size), min(end - 1, start + int(1.25 * size))
-                if hi > lo:
-                    end = lo + int(np.argmin(ink[:, lo:hi].sum(axis=0)))
-            return gray[y0:y1, x0 + start:x0 + end], x0 + end
+            return gray[y0:y1, x0 + start:x0 + i + 1], x0 + i + 1
         i += 1
     return None
+
+
+WIDE = 1.2  # trecho mais largo que isso (× a altura da tinta) pode ser figurina colada em outra letra
+CUT_SIMILARITY = 0.72  # para decidir só onde cortar; a peça ainda passa pela comparação normal depois
+
+
+def _ink_height(strip: np.ndarray) -> int:
+    rows = np.flatnonzero((strip < 128).any(axis=1))
+    return int(rows[-1] - rows[0] + 1) if rows.size else 0
+
+
+def is_wide(strip: np.ndarray) -> bool:
+    return strip.shape[1] > WIDE * max(1, _ink_height(strip))
+
+
+def _aspect(vec: np.ndarray) -> float:
+    """Largura/altura do desenho dentro do quadrado normalizado (``_normalize`` mantém a proporção)."""
+    ys, xs = np.nonzero(vec > 0.3)
+    if ys.size == 0:
+        return 1.0
+    return (xs.max() - xs.min() + 1) / (ys.max() - ys.min() + 1)
+
+
+def fit_template(strip: np.ndarray, templates: list[np.ndarray]) -> tuple[int, int, float]:
+    """(largura do corte, índice do molde, semelhança): o começo do trecho que mais se parece com uma
+    das figurinas do livro, na largura dela. Separa "♗" de "♗xe5" quando as duas encostam."""
+    from app.extraction.glyph_probe import _similarity
+
+    height = _ink_height(strip)
+    best = (strip.shape[1], -1, 0.0)
+    if height == 0:
+        return best
+    step = max(1, height // 25)
+    for ti, t in enumerate(templates):
+        target = _aspect(t) * height
+        for w in range(max(2, int(0.85 * target)), min(strip.shape[1], int(1.15 * target)) + 1, step):
+            vec = _normalize(strip[:, :w])
+            if vec is None:
+                continue
+            sim = _similarity(vec, t)
+            if sim > best[2]:
+                best = (w, ti, sim)
+    return best
 
 
 def _rest_after(word: OcrWord, x: int, fallback: str) -> str:
@@ -349,6 +406,42 @@ def _scores(vec: np.ndarray) -> list[tuple[float, str]]:
     return sorted(out, reverse=True)
 
 
+def separate_touching(cands: list[PieceCandidate]) -> int:
+    """Corta, pelos moldes do próprio livro, a figurina colada na captura ou na casa.
+
+    Os moldes vêm dos trechos estreitos (a maioria das figurinas não encosta em nada), agrupados.
+    Devolve quantos candidatos foram cortados.
+    """
+    from app.extraction.glyph_probe import _similarity
+
+    narrow = [c for c in cands if c.strip is not None and not is_wide(c.strip)]
+    groups: list[list[np.ndarray]] = []
+    reps: list[np.ndarray] = []
+    for c in narrow:
+        for gi, rep in enumerate(reps):
+            if _similarity(c.vec, rep) >= CLUSTER_SIMILARITY:
+                groups[gi].append(c.vec)
+                reps[gi] = np.mean(groups[gi], axis=0)
+                break
+        else:
+            groups.append([c.vec])
+            reps.append(c.vec)
+    templates = [rep for rep, g in zip(reps, groups, strict=True) if len(g) >= PROTOTYPE_MIN_MEMBERS]
+    cut = 0
+    for c in cands:
+        if c.strip is None or not templates or not is_wide(c.strip):
+            continue
+        width, _ti, sim = fit_template(c.strip, templates)
+        if sim >= CUT_SIMILARITY:
+            vec = _normalize(c.strip[:, :width])
+            if vec is not None:
+                c.vec = vec
+                if c.word is not None:
+                    c.rest = _rest_after(c.word, c.x0 + width, c.rest)
+                cut += 1
+    return cut
+
+
 def label_pieces(cands: list[PieceCandidate]) -> None:
     """Agrupa os desenhos iguais do documento e decide a peça de cada grupo pela média deles.
 
@@ -359,6 +452,7 @@ def label_pieces(cands: list[PieceCandidate]) -> None:
     """
     from app.extraction.glyph_probe import _similarity
 
+    separate_touching(cands)
     clusters: list[dict] = []
     for c in cands:
         for i, cl in enumerate(clusters):
@@ -610,6 +704,20 @@ def _clear_of(bbox: tuple[int, int, int, int], areas: list[pymupdf.Rect]) -> tup
 
 
 _PREFIX_RE = re.compile(r"^[(\[]?\d{1,3}\s?\.{0,3}")
+
+
+def _move_prefix(text: str) -> int:
+    """Comprimento do número do lance no começo da palavra.
+
+    Um dígito sozinho, sem ponto, seguido de casa ("2a7!") não é número: é a figurina que o OCR leu como
+    dígito, e é ali que se procura a peça.
+    """
+    m = _PREFIX_RE.match(text)
+    if m is None:
+        return 0
+    if len(m.group()) == 1 and _REST_RE.match(text[1:]):
+        return 0
+    return len(m.group())
 _WORDLIKE_RE = re.compile(r"[a-z]{3,}")
 # Restos que nenhum lance produz: o OCR perdeu ou trocou a peça ("2...8c4", "c62", "4..4d6").
 _IMPOSSIBLE_RE = re.compile(r"^[(\[]?(?:\d{1,3}\.{2,3}\d|[a-h][1-8]\d|\d{1,3}\.\.\d|\S?x?[a-h][lI|][+#!?,;.)]*$)")
@@ -634,7 +742,8 @@ def scan_page(page: pymupdf.Page, lang: str = "eng", dpi: int = OCR_DPI, hocr: s
                 if vec is None:
                     continue
                 rest = _rest_after(w, found[1], w.text[k + 1:])
-                cands.append(PieceCandidate(page.number + 1, (bi, li, wi), w.text[:k], rest, w.text, vec))
+                cands.append(PieceCandidate(page.number + 1, (bi, li, wi), w.text[:k], rest, w.text, vec,
+                                            strip=found[0], word=w, x0=found[1] - found[0].shape[1]))
     return PageScan(page.number + 1, hocr, boards, scale, cands)
 
 
@@ -659,6 +768,7 @@ _PIECE_MOVE_RE = re.compile(r"^(?:\(?\d{1,3}\.{0,3}|\(?\.\.\.)?[♔♕♖♗♘K
 
 
 _FIX_ONE_RE = re.compile(r"^((?:\(?\d{1,3}\.{1,3}|\.\.\.)?[♔♕♖♗♘][a-h]?[1-8]?[x:]?[a-h])[lI|\]](?=t?[+†#!?.,;:)]*$)")
+_FIX_RANK_RE = re.compile(r"^((?:\(?\d{1,3}\.{1,3}|\.\.\.)?[♔♕♖♗♘][a-h]?[1-8]?[x:]?[a-h])([sGS])(?=[t†+#!?.,;:)]*$)")
 _FIX_NUMBER_RE = re.compile(r"^(\(?\d{1,2})[lI](\d?\.{1,3})(?=\S)")
 _FIX_CHECK_RE = re.compile(r"^((?:\(?\d{1,3}\.{1,3}|\.\.\.)?[♔♕♖♗♘]?[a-h]?[1-8]?[x:]?[a-h][1-8])t(?=[!?]*[.,;:)]*$)")
 
@@ -676,10 +786,13 @@ def fix_move_glyphs(text: str) -> tuple[str, bool]:
     out = _FIX_NUMBER_RE.sub(lambda m: m.group(1) + "1" + m.group(2), text)
     # lance de peão ("c6t", "exf4t"): letra de coluna, casa e "t" não formam palavra
     if any(ch in WHITE_FIGURINES for ch in out) or re.match(r"^\(?\d{1,3}\.|^[a-h](?:x[a-h])?[1-8]t", out):
-        out = _FIX_ONE_RE.sub(r"\g<1>1", out)
-        out = _FIX_CHECK_RE.sub(r"\g<1>†", out)
         # coluna lida como símbolo, entre a peça (ou o número, ou o "x") e a fileira: "♕£3" é "♕f3", "¢4" é "g4"
         out = re.sub(r"(?<=[♔♕♖♗♘x.])([£¢])(?=[1-8](?![0-9]))", lambda m: "f" if m.group(1) == "£" else "g", out)
+        # depois da figurina: "♕F7" é "♕f7"; fileira lida como letra no fim do lance: "♔gs" é "♔g8", "♖bG" é "♖b6"
+        out = re.sub(r"(?<=[♔♕♖♗♘])(x?)F(?=[1-8](?![0-9]))", r"\1f", out)
+        out = _FIX_RANK_RE.sub(lambda m: m.group(1) + {"s": "8", "G": "6", "S": "5"}[m.group(2)], out)
+        out = _FIX_ONE_RE.sub(r"\g<1>1", out)
+        out = _FIX_CHECK_RE.sub(r"\g<1>†", out)
         # "?" lido como "2" logo depois da casa: "d52!" é "d5?!", "e5!2" é "e5!?" (não há casa com 3 caracteres)
         out = _FIX_QUESTION_RE.sub(lambda m: m.group(1) + m.group(2).replace("2", "?"), out)
     return out, out != text
@@ -698,33 +811,55 @@ class _Figurine:
 def _find_figurines(gray: np.ndarray, blocks: list[OcrBlock], protos: list[Prototype]) -> list[_Figurine]:
     """Figurinas no começo das palavras (ou logo depois do número do lance), pelos protótipos do documento."""
     found = []
+    templates = [pr.vec for pr in protos if pr.char]  # "não é peça" não serve de molde para o corte
     for block in blocks:
         for line in block.lines:
             for w in line.words:
-                m = _PREFIX_RE.match(w.text)
-                k = len(m.group()) if m else 0
+                k = _move_prefix(w.text)
                 if k >= len(w.text):
                     continue
-                crop = _piece_crop(gray, w, line, k)
-                if crop is None:
-                    continue
-                img, end = crop
-                vec = _normalize(img)
-                if vec is None:
-                    continue
-                tail = "".join(c.text for c in w.chars if (c.bbox[0] + c.bbox[2]) / 2 > end) if w.chars else ""
-                if _WORDLIKE_RE.search(tail):  # "Tragicomedies": letra inicial de palavra comum, não peça
-                    continue
-                char, sim, margin = match_prototype(vec, protos)
-                # desenho menos parecido, mas só com essa peça, num lugar que só pode ser peça: o OCR leu um
-                # símbolo (não uma coluna, como em "exd5") e o resto é casa de lance ("\f3" é "♘f3")
-                loose = (sim >= LOOSE_SIMILARITY and margin >= LOOSE_MARGIN and w.text[k] not in "abcdefgh0123456789"
-                         and _REST_RE.match(tail))
-                if sim >= MATCH_SIMILARITY or loose:
-                    x0 = end - img.shape[1]
-                    found.append(_Figurine(char, sim, margin, (x0, line.bbox[1], end, line.bbox[3]), w.bbox,
-                                           w.text[:k]))
+                fig = _figurine_in_word(gray, w, line, k, protos, templates)
+                if fig is not None:
+                    found.append(fig)
     return found
+
+
+def _figurine_in_word(gray: np.ndarray, w: OcrWord, line: OcrLine, k: int, protos: list[Prototype],
+                      templates: list[np.ndarray]) -> _Figurine | None:
+    """A figurina no começo da palavra, se o desenho ali é de uma peça do livro.
+
+    Tenta o trecho sob a caixa do caractere e, se não for peça, o primeiro desenho largo depois do número
+    (a caixa às vezes vem deslocada). Desenho mais parecido com um grupo "não é peça" fica como o OCR leu.
+    """
+    tried = set()
+    for by_box in (True, False):
+        crop = _piece_crop(gray, w, line, k, by_box)
+        if crop is None or crop[1] in tried:
+            continue
+        tried.add(crop[1])
+        img, end = crop
+        if is_wide(img) and templates:  # figurina colada na captura ou na casa: corta na largura do molde
+            width, _ti, sim = fit_template(img, templates)
+            if sim >= CUT_SIMILARITY:
+                end -= img.shape[1] - width
+                img = img[:, :width]
+        vec = _normalize(img)
+        if vec is None:
+            continue
+        tail = "".join(c.text for c in w.chars if (c.bbox[0] + c.bbox[2]) / 2 > end) if w.chars else ""
+        if _WORDLIKE_RE.search(tail):  # "Tragicomedies": letra inicial de palavra comum, não peça
+            return None
+        char, sim, margin = match_prototype(vec, protos)
+        if not char:
+            continue
+        # desenho menos parecido, mas só com essa peça, num lugar que só pode ser peça: o OCR leu um
+        # símbolo (não uma coluna, como em "exd5") e o resto é casa de lance ("\f3" é "♘f3")
+        loose = (sim >= LOOSE_SIMILARITY and margin >= LOOSE_MARGIN and w.text[k] not in "abcdefgh0123456789"
+                 and _REST_RE.match(tail))
+        if sim >= MATCH_SIMILARITY or loose:
+            x0 = end - img.shape[1]
+            return _Figurine(char, sim, margin, (x0, line.bbox[1], end, line.bbox[3]), w.bbox, w.text[:k])
+    return None
 
 
 def _letter_font(size: int):
@@ -758,29 +893,28 @@ def _restore_figurines(blocks: list[OcrBlock], figs: list[_Figurine]) -> list[st
     """Volta a letra desenhada para a figurina, pela posição. Devolve avisos do que não achou lugar."""
     notes = []
     for f in figs:
-        cx = (f.blob[0] + f.blob[2]) / 2
+        x0, x1 = f.blob[0], f.blob[2]
         cy = (f.blob[1] + f.blob[3]) / 2
         letter = "KQRBN"[WHITE_FIGURINES.index(f.char)]
+
+        def overlap(box: tuple[int, int, int, int], x0: int = x0, x1: int = x1) -> int:
+            return min(box[2], x1) - max(box[0], x0)
+
+        # a palavra que cobre o desenho; a caixa da letra pintada às vezes sai estreita, longe do centro
+        words = sorted((w for block in blocks for line in block.lines for w in line.words
+                        if w.bbox[1] - 2 <= cy <= w.bbox[3] + 2 and overlap(w.bbox) > 0),
+                       key=lambda w: -overlap(w.bbox))
         done = False
-        for block in blocks:
-            for line in block.lines:
-                for w in line.words:
-                    if not (w.bbox[0] - 2 <= cx <= w.bbox[2] + 2 and w.bbox[1] - 2 <= cy <= w.bbox[3] + 2):
-                        continue
-                    i = next((i for i, c in enumerate(w.chars) if c.bbox[0] - 2 <= cx <= c.bbox[2] + 2), None)
-                    if i is None or w.chars[i].text != letter:
-                        m = _PREFIX_RE.match(w.text)
-                        k = len(m.group()) if m else 0
-                        i = k if k < len(w.text) and w.text[k] == letter else None
-                    if i is not None:
-                        w.text = w.text[:i] + f.char + w.text[i + 1:]
-                        if i < len(w.chars):
-                            w.chars[i].text = f.char
-                        done = True
-                    break
-                if done:
-                    break
-            if done:
+        for w in words:
+            i = next((i for i, c in enumerate(w.chars) if c.text == letter and overlap(c.bbox) > -2), None)
+            if i is None:
+                k = _move_prefix(w.text)
+                i = k if k < len(w.text) and w.text[k] == letter else None
+            if i is not None:
+                w.text = w.text[:i] + f.char + w.text[i + 1:]
+                if i < len(w.chars):
+                    w.chars[i].text = f.char
+                done = True
                 break
         if not done:
             notes.append(f"ocr_figurina_sem_lugar: {f.char} ({f.prefix or 'sem número'})")
@@ -1036,7 +1170,11 @@ def group_json(g: FigurineGroup) -> dict:
 
 
 def confirmed_prototypes(items: list[dict]) -> list[Prototype]:
-    """Protótipos confirmados pelo usuário (``ocr-figurinas.json``): só os marcados como figurina."""
+    """Protótipos confirmados pelo usuário (``ocr-figurinas.json``).
+
+    Os marcados "não é peça" (``char`` vazio) também entram: um desenho mais parecido com eles (o "x"
+    sozinho, peça colada no "x") fica como o OCR leu, em vez de virar a peça mais próxima.
+    """
     return [Prototype(_vec_from_b64(it["vec"]), it["char"], int(it.get("count", 1)))
             for it in items if it.get("char") in WHITE_FIGURINES]
 

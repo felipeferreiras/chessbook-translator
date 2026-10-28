@@ -233,11 +233,11 @@ _READ_HINTS = {"−": {"-", "—", "–", "−"}, "†": {"†", "t", "+", "¢",
 def suggest(vec: np.ndarray, height: float, read: list[str], figurines=None) -> tuple[str, float, float]:
     """(símbolo, nota, margem) mais provável: a peça da promoção pelos protótipos do livro; o resto
     pelas referências. Sem nota e margem suficientes, ou contra a leitura do OCR, não sugere nada."""
-    if figurines and height >= 0.75:
+    if figurines and height >= 0.75:  # desenho alto depois da casa: a peça da promoção ("e8=♕")
         from app.extraction.ocr import match_prototype
 
         char, score, margin = match_prototype(vec, figurines)
-        if score >= 0.75 and margin >= 0.05:
+        if score >= 0.7 and margin >= 0.05:
             return char, score, margin
     scored: dict[str, float] = {}
     for ch, ref in _references():

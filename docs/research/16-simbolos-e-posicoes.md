@@ -70,3 +70,23 @@ gasto, nenhum texto do livro no repositório.
   grupos para 39 488 casas; o contorno resolveu (86 grupos).
 * **Modelo "best" do Tesseract**: melhor nas letras e casas ("♕g4", "c6"), pior
   no xeque e nas figurinas pintadas; não adotado (ver limitações).
+
+## Figurinas coladas, cortadas e "não é peça" (segundo relato)
+
+O usuário viu na tela de figurinas grupos com a peça colada no "x" ("♗x",
+"♕xf6"), o "x" com a coluna ("xf"), damas pela metade e algarismos; e, nos
+símbolos, uma dama (a promoção).
+
+| Causa | Correção |
+|---|---|
+| Recorte da peça pela caixa do Tesseract, que no negrito vem deslocada | o trecho contínuo de tinta sob a caixa; se é largo demais para uma peça, corta na largura das figurinas do próprio livro (moldes tirados das peças que não encostam em nada) |
+| Borda clara da dama partia o trecho | limiar mais claro para a continuidade |
+| Grupo "não é peça" pintado como "K" na segunda leitura (`"♔♕♖♗♘".index("")` é 0): a figurina sumia do lance ("17.♗xh7†" → "17. K7+") e servia de molde de corte | "não é peça" só recusa o desenho: o lance fica como o OCR leu, nada é apagado |
+| Bispo lido como "2" tomado por número de lance ("2a7!") | dígito sozinho seguido de casa é a figurina |
+| Letra pintada com caixa estreita, fora do centro do desenho: a figurina não voltava ("30.Nh6") | a palavra é achada pela sobreposição com o desenho |
+| "♕F7", "♔gs", "♖bG" | "♕f7", "♔g8", "♖b6" (só depois de figurina) |
+
+Em 40 páginas (rótulos dados olhando os grupos): lances com figurina 1568 →
+1626; capturas com figurina 524 → 541. No livro inteiro, 35 grupos, sem
+algarismos, "xf" ou peças cortadas; restam 3 grupos pequenos de dama colada
+(8 ocorrências), que o usuário marca "não é peça".

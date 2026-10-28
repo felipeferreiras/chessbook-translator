@@ -359,22 +359,81 @@ def test_symbols_after_moves_are_read_by_their_drawing(tmp_path):
 
 
 def test_figurine_touching_the_capture_x_is_cut_at_the_figurine():
-    """"♕xf6" com a dama encostada no "x": o recorte é só a dama (senão o grupo vira "♕xf6" e pintar
-    a letra apagava a captura)."""
+    """"♕xf6" com a dama encostada no "x": o trecho de tinta leva os dois; o molde da dama (da própria
+    página) corta na largura dela (senão o grupo vira "♕xf6" e pintar a letra apagava a captura)."""
+    from PIL import Image, ImageDraw, ImageFont
+
+    font = ImageFont.truetype(str(syn.DEJAVU), 60)
+
+    def draw(text_after: str, overlap: int) -> tuple[np.ndarray, int]:
+        img = Image.new("L", (400, 100), 255)
+        d = ImageDraw.Draw(img)
+        d.text((10, 10), "♕", font=font, fill=0)
+        queen_end = 10 + int(d.textlength("♕", font=font))
+        if text_after:
+            d.text((queen_end - overlap, 10), text_after, font=font, fill=0)
+        return np.asarray(img), queen_end
+
+    alone, _ = draw("", 0)
+    cols = np.flatnonzero((alone < 128).any(axis=0))
+    template = ocr._normalize(alone[:, cols[0]:cols[-1] + 1])
+    queen_ink_end = int(cols[-1]) + 1
+    gray, _ = draw("xf6", 10)  # encostado
+    cols = np.flatnonzero((gray < 128).any(axis=0))
+    line = ocr.OcrLine((0, 0, 400, 100), 60.0, [])
+    word = ocr.OcrWord("Wxf6", (int(cols[0]), 0, int(cols[-1]) + 1, 100), 90.0, [])
+    strip, _end = ocr._piece_crop(gray, word, line, 0)
+    assert ocr.is_wide(strip)
+    width, index, sim = ocr.fit_template(strip, [template])
+    assert index == 0 and sim > 0.9
+    assert abs((int(cols[0]) + width) - queen_ink_end) <= 4
+
+
+def test_not_a_piece_group_is_never_painted_as_a_king():
+    """Grupo marcado "não é peça" serve para recusar o desenho, não como molde nem como figurina: antes, a
+    letra pintada era "K" (``"♔♕♖♗♘".index("")`` é 0) e a figurina sumia do lance ("17.♗xh7†" → "17. K7+")."""
     from PIL import Image, ImageDraw, ImageFont
 
     font = ImageFont.truetype(str(syn.DEJAVU), 60)
     img = Image.new("L", (400, 100), 255)
-    draw = ImageDraw.Draw(img)
-    draw.text((10, 10), "♕", font=font, fill=0)
-    queen_end = 10 + int(draw.textlength("♕", font=font))
-    draw.text((queen_end - 6, 10), "xf6", font=font, fill=0)  # encostado
+    ImageDraw.Draw(img).text((10, 10), "♕", font=font, fill=0)
     gray = np.asarray(img)
     cols = np.flatnonzero((gray < 128).any(axis=0))
+    vec = ocr._normalize(gray[:, cols[0]:cols[-1] + 1])
     line = ocr.OcrLine((0, 0, 400, 100), 60.0, [])
-    word = ocr.OcrWord("Wxf6", (int(cols[0]), 0, int(cols[-1]) + 1, 100), 90.0, [])
-    crop, end = ocr._piece_crop(gray, word, line, 0)
-    assert end <= queen_end + 2 and crop.shape[1] <= 1.25 * 60
+    word = ocr.OcrWord("Wf6", (int(cols[0]), 0, int(cols[-1]) + 60, 100), 90.0, [])
+    negative = ocr.confirmed_prototypes([{"char": "", "count": 9, "vec": ocr._vec_b64(vec)}])
+    assert negative and negative[0].char == ""
+    assert ocr._figurine_in_word(gray, word, line, 0, negative, []) is None
+    queen = ocr.confirmed_prototypes([{"char": "♕", "count": 9, "vec": ocr._vec_b64(vec)}])
+    fig = ocr._figurine_in_word(gray, word, line, 0, queen, [queen[0].vec])
+    assert fig is not None and fig.char == "♕"
+
+
+def test_lone_digit_before_a_square_is_the_figurine_not_the_move_number():
+    assert ocr._move_prefix("2a7!") == 0  # "♗a7!" com o bispo lido como "2"
+    assert ocr._move_prefix("17.2xh7+") == 3
+    assert ocr._move_prefix("30...♖xf5") == 5
+    assert ocr._move_prefix("17") == 2
+
+
+def test_painted_letter_is_restored_even_when_its_box_misses_the_center():
+    """O Tesseract às vezes dá à letra pintada uma caixa estreita, à direita do centro do desenho."""
+    n = ocr.OcrChar("N", (1762, 1121, 1774, 1162), 90.0)
+    rest = [ocr.OcrChar(c, (1780 + 20 * i, 1121, 1798 + 20 * i, 1162), 90.0) for i, c in enumerate("h6t")]
+    word = ocr.OcrWord("Nh6t", (1762, 1121, 1844, 1162), 90.0, [n, *rest])
+    number = ocr.OcrWord("30.", (1688, 1129, 1738, 1160), 90.0, [])
+    block = ocr.OcrBlock((1688, 1120, 1844, 1170), [ocr.OcrLine((1688, 1120, 1844, 1170), 42.0, [number, word])])
+    fig = ocr._Figurine("♘", 0.94, 0.7, (1742, 1120, 1774, 1170), (1684, 1120, 1844, 1163), "30.")
+    assert ocr._restore_figurines([block], [fig]) == []
+    assert any(w.text.startswith("♘h6") for w in block.lines[0].words)
+
+
+def test_rank_and_file_read_as_letters_after_a_figurine():
+    assert ocr.fix_move_glyphs("♔gs")[0] == "♔g8"
+    assert ocr.fix_move_glyphs("24.♘F7+?")[0] == "24.♘f7+?"
+    assert ocr.fix_move_glyphs("♖bGt")[0] == "♖b6†"
+    assert ocr.fix_move_glyphs("Gs")[0] == "Gs" and ocr.fix_move_glyphs("fs")[0] == "fs"
 
 
 def test_discarded_symbol_disappears_and_not_a_symbol_keeps_the_ocr_reading():

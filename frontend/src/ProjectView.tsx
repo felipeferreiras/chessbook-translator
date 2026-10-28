@@ -213,8 +213,10 @@ const KIND_TEXT = {
   symbols: {
     title: "Símbolos do livro", button: "Confirmar e reescrever os lances", unit: "vezes",
     help: "Desenhos iguais achados depois da casa dos lances: xeque, mate, ! e ?, avaliação (± ⩲ ⩱ ∓ = ∞) e a " +
-          "peça da promoção. Confira cada grupo; o fim dos lances é reescrito com o símbolo escolhido (segundos). " +
-          "Grupo sem símbolo decidido deixa o lance como o OCR leu, com aviso.",
+          "peça da promoção. Confirme antes as figurinas: a peça da promoção é sugerida por elas (um desenho de " +
+          "dama aqui é a promoção, \"e8=♕\"). Algarismo da casa que entrou no recorte: \"descartar\". O fim dos " +
+          "lances é reescrito com o símbolo escolhido (segundos); grupo sem símbolo decidido deixa o lance como o " +
+          "OCR leu, com aviso.",
   },
   pieces: {
     title: "Peças dos diagramas", button: "Confirmar e refazer as posições", unit: "casas",
