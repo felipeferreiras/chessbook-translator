@@ -284,8 +284,10 @@ function GroupsPanel(props: { kind: "figurines" | "symbols" | "pieces"; projectI
             {info.groups.filter((g) => figurines || showSmall || g.count > 5).map((g) => {
               const read = (figurines ? g.ocr : g.read) ?? [];
               const doubtful = !(String(g.id) in info.labels) && (figurines ? (g.margin ?? 0) < 0.05 : !g.auto);
+              // grupo grande "não é peça" é quase sempre uma peça de verdade (a dama lida "W" ficava assim)
+              const bigNone = figurines && (labels[g.id] ?? "") === "" && g.count >= 10;
               return (
-                <li key={g.id} className={doubtful ? "doubt" : ""}>
+                <li key={g.id} className={doubtful || bigNone ? "doubt" : ""}>
                   <img src={g.image} alt={`grupo ${g.id}`} width={48} height={48} />
                   <select value={labels[g.id] ?? ""} aria-label={`Grupo ${g.id}`}
                           onChange={(e) => setLabels({ ...labels, [g.id]: e.target.value })}>
@@ -299,6 +301,7 @@ function GroupsPanel(props: { kind: "figurines" | "symbols" | "pieces"; projectI
                     {g.count} {text.unit}
                     {props.kind === "pieces" ? "" : ` · OCR leu “${read.join(" ") || "?"}”`}
                     {doubtful ? (figurines ? " · sugestão incerta" : " · sem sugestão") : ""}
+                    {bigNone ? " · muitas vezes no livro: confira se não é uma peça" : ""}
                   </small>
                 </li>
               );

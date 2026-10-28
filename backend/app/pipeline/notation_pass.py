@@ -460,6 +460,7 @@ def collect(doc: pymupdf.Document, pages: range | None = None, ocr_cache=None, o
                     elif "-" in text and text.replace("-", "").isdigit():
                         diagram.label = text
     _running_heads(result.regions)
+    _reorder(result.regions, {pno + 1: doc[pno].rect.width / 2 for pno in page_numbers})
     texts = [r.resolved.text for r in result.regions if r.role == "text"]
     result.style, result.evidence = detect_style(texts)
     report = detect_convention(texts)
@@ -489,6 +490,18 @@ def _running_heads(regions: list[Region]) -> None:
         k = key(r)
         if not (pages[k] >= 3 or re.fullmatch(r"[#\s.,–—-]*", k)):
             r.role = "text"
+
+
+def _reorder(regions: list[Region], mids: dict[int, float]) -> None:
+    """Ordem de leitura depois de saber o que é cabeçalho: o topo de cada coluna, que caía na faixa do
+    cabeçalho, volta para a sua coluna (antes, o primeiro parágrafo da coluna da direita vinha logo
+    depois do primeiro da esquerda)."""
+    band = {"header": 0, "text": 1, "footer": 2}
+    for r in regions:
+        if r.role == "text" and r.page in mids:
+            r.column = 0 if r.bbox[0] < mids[r.page] - 5 else 1
+    regions.sort(key=lambda r: (r.page, band.get(r.role, 1), r.column if r.role == "text" else 0, r.bbox[1],
+                                r.bbox[0]))
 
 
 def _following_diagram(events: list[tuple[tuple, str, object]], pos: int, key: tuple, style: LexStyle) -> str | None:

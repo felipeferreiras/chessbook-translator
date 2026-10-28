@@ -196,7 +196,12 @@ function PageView(props: { project: Project; page: number; author: string; onlyA
     setSegments((list) => list.map((x) => (x.id === s.id ? s : x)));
     props.onChange();
   };
-  const shown = segments.filter((s) => s.status !== "not_needed" && (!props.onlyAttention || s.needs_attention));
+  // tudo o que foi lido, na ordem da página (também os trechos só de lances, que podem ter erro de leitura);
+  // o que fica como na imagem sem tradução (marcas, sujeira, descartados) vai junto no fim, recolhido
+  const visible = segments.filter((s) => !props.onlyAttention || s.needs_attention);
+  const asImage = (s: Segment) => s.kept_as_image && !s.current && !s.needs_attention;
+  const shown = visible.filter((s) => !asImage(s));
+  const hidden = visible.filter(asImage);
 
   return (
     <section>
@@ -233,11 +238,25 @@ function PageView(props: { project: Project; page: number; author: string; onlyA
         <DiagramCard key={d.id} projectId={project.id} diagram={d} author={props.author}
                      onSaved={(x) => { setDiagrams((list) => list.map((y) => (y.id === x.id ? x : y))); props.onChange(); }} />
       ))}
-      {shown.length === 0 && !diagrams.length && <p className="muted">Nada a revisar nesta página com o filtro atual.</p>}
+      {shown.length === 0 && !hidden.length && !diagrams.length && (
+        <p className="muted">Nada a revisar nesta página com o filtro atual.</p>
+      )}
       {shown.map((s) => (
         <SegmentCard key={s.id} projectId={project.id} segment={s} author={props.author} onSaved={replace}
                      onRetranslate={props.onRetranslate} />
       ))}
+      {hidden.length > 0 && (
+        <details className="as-image">
+          <summary>
+            {hidden.length} {hidden.length === 1 ? "trecho fica" : "trechos ficam"} como na imagem (marcas, sujeira
+            lida como letras ou descartados): não vão ao tradutor nem mudam a página
+          </summary>
+          {hidden.map((s) => (
+            <SegmentCard key={s.id} projectId={project.id} segment={s} author={props.author} onSaved={replace}
+                         onRetranslate={props.onRetranslate} />
+          ))}
+        </details>
+      )}
     </section>
   );
 }
@@ -246,20 +265,52 @@ const GLYPH: Record<string, string> = { K: "♔", Q: "♕", R: "♖", B: "♗", 
                                         k: "♚", q: "♛", r: "♜", b: "♝", n: "♞", p: "♟" };
 const PLACEMENT_RE = /^[KQRBNPkqrbnp1-8]+(\/[KQRBNPkqrbnp1-8]+){7}$/;
 
-/** Tabuleiro desenhado a partir do campo de posição da FEN (casas a8…h1). */
-function Board(props: { placement: string }) {
+/** As 64 casas (a8…h1) do campo de posição da FEN: a letra da peça ou "" na casa vazia. */
+function squaresOf(placement: string): string[] {
   const cells: string[] = [];
-  for (const row of props.placement.split("/")) {
+  for (const row of placement.split("/")) {
     for (const ch of row) {
       if (/\d/.test(ch)) for (let i = 0; i < Number(ch); i++) cells.push("");
-      else cells.push(GLYPH[ch] ?? "?");
+      else cells.push(ch);
     }
   }
+  return cells.slice(0, 64);
+}
+
+function placementOf(cells: string[]): string {
+  const rows = [];
+  for (let r = 0; r < 8; r++) {
+    let row = "";
+    let empty = 0;
+    for (const ch of cells.slice(r * 8, r * 8 + 8)) {
+      if (!ch) { empty++; continue; }
+      row += (empty ? String(empty) : "") + ch;
+      empty = 0;
+    }
+    rows.push(row + (empty ? String(empty) : ""));
+  }
+  return rows.join("/");
+}
+
+const FILES = "abcdefgh";
+
+/** Tabuleiro desenhado a partir do campo de posição da FEN (casas a8…h1); com ``onSquare``, cada casa
+ * é um botão (corrigir a posição clicando). */
+function Board(props: { placement: string; onSquare?: (index: number) => void }) {
+  const cells = squaresOf(props.placement);
   return (
-    <div className="board" role="img" aria-label={`posição ${props.placement}`}>
-      {cells.slice(0, 64).map((c, i) => (
-        <span key={i} className={(Math.floor(i / 8) + i) % 2 ? "dark" : "light"}>{c}</span>
-      ))}
+    <div className={`board${props.onSquare ? " editable" : ""}`} role={props.onSquare ? "grid" : "img"}
+         aria-label={`posição ${props.placement}`}>
+      {cells.map((c, i) => {
+        const cls = (Math.floor(i / 8) + i) % 2 ? "dark" : "light";
+        const name = `${FILES[i % 8]}${8 - Math.floor(i / 8)}`;
+        return props.onSquare ? (
+          <button key={i} type="button" className={cls} onClick={() => props.onSquare?.(i)}
+                  aria-label={`casa ${name}${c ? `: ${GLYPH[c]}` : ", vazia"}`} title={name}>{c ? GLYPH[c] ?? "?" : ""}</button>
+        ) : (
+          <span key={i} className={cls}>{c ? GLYPH[c] ?? "?" : ""}</span>
+        );
+      })}
     </div>
   );
 }
@@ -271,7 +322,14 @@ function DiagramCard(props: { projectId: string; diagram: DiagramInfo; author: s
   const [placement, setPlacement] = useState(d.placement ?? d.read ?? "");
   const [side, setSide] = useState<string>(d.side_to_move ?? "");
   const [message, setMessage] = useState("");
+  const [tool, setTool] = useState("N");  // peça que o clique põe na casa ("" apaga)
   const valid = PLACEMENT_RE.test(placement);
+  const editable = valid || !placement;
+  const onSquare = (i: number) => {
+    const cells = valid ? squaresOf(placement) : Array<string>(64).fill("");
+    cells[i] = cells[i] === tool ? "" : tool;  // clicar de novo com a mesma peça apaga
+    setPlacement(placementOf(cells));
+  };
   const changed = placement !== (d.placement ?? "") || side !== (d.side_to_move ?? "");
   const save = async () => {
     setMessage("");
@@ -294,7 +352,18 @@ function DiagramCard(props: { projectId: string; diagram: DiagramInfo; author: s
       <div className="columns">
         <img src={api.diagramImage(props.projectId, d.page, d.index)} alt={`Diagrama ${d.id}, original`} />
         <div>
-          {valid ? <Board placement={placement} /> : <p className="muted">Posição incompleta: corrija abaixo.</p>}
+          {editable ? <Board placement={valid ? placement : "8/8/8/8/8/8/8/8"} onSquare={onSquare} />
+            : <p className="muted">Posição incompleta: corrija abaixo.</p>}
+          <div className="palette" role="radiogroup" aria-label="Peça para pôr na casa clicada">
+            {["K", "Q", "R", "B", "N", "P", "k", "q", "r", "b", "n", "p", ""].map((ch) => (
+              <button key={ch || "vazia"} type="button" role="radio" aria-checked={tool === ch}
+                      className={tool === ch ? "on" : ""} onClick={() => setTool(ch)}
+                      title={ch ? (ch === ch.toUpperCase() ? "branca" : "preta") : "apagar a casa"}>
+                {ch ? GLYPH[ch] : "∅"}
+              </button>
+            ))}
+          </div>
+          <p className="muted small">Escolha a peça e clique na casa do tabuleiro para corrigir; ∅ apaga a casa.</p>
           <label className="small">Posição (FEN, de a8 a h1)
             <input value={placement} onChange={(e) => setPlacement(e.target.value.trim())} spellCheck={false}
                    aria-label={`Posição do diagrama ${d.id}`} />
@@ -369,7 +438,10 @@ function SegmentCard(props: { projectId: string; segment: Segment; author: strin
         <code>{s.id}</code>
         <span className="section">{s.section}</span>
         {s.current && <span className="chip">{KIND[s.current.kind] ?? s.current.kind}</span>}
-        {!s.current && <span className="chip bad">{STATUS[s.status] ?? s.status}</span>}
+        {s.discarded ? <span className="chip">descartado: fica como na imagem</span>
+          : !s.current && s.kept_as_image ? <span className="chip">fica como na imagem (não vai ao tradutor)</span>
+          : !s.current && s.status === "not_needed" ? <span className="chip">só lances (não vai ao tradutor)</span>
+          : !s.current && <span className="chip bad">{STATUS[s.status] ?? s.status}</span>}
         {s.approved && <span className="chip ok">aprovado</span>}
         {s.source_extracted !== null && <span className="chip">original corrigido</span>}
       </header>
@@ -435,7 +507,15 @@ function SegmentCard(props: { projectId: string; segment: Segment; author: strin
                 title={s.kept_as_image ? "O bloco fica como na imagem original (não é traduzido)" : undefined}>
           {s.approved ? "Retirar aprovação" : s.kept_as_image ? "Manter como na imagem" : "Aprovar"}
         </button>
-        {dirty && <button onClick={() => setText(s.current?.text ?? "")}>Descartar</button>}
+        {dirty && <button onClick={() => setText(s.current?.text ?? "")}>Descartar edição</button>}
+        {s.source_flags.length > 0 && (
+          <button disabled={busy || needAuthor}
+                  onClick={() => run(() => api.discard(projectId, s.id, !s.discarded, props.author),
+                                     s.discarded ? "Trecho de volta." : "Descartado: fica como na imagem.")}
+                  title="Lixo do OCR (sujeira, borda, mancha lida como letras): não é traduzido e a página fica como a imagem original ali">
+            {s.discarded ? "Desfazer descarte" : "Descartar trecho"}
+          </button>
+        )}
         {canFixSource && sourceText === null && (
           <button onClick={() => setSourceText(s.source)}
                   title="Corrigir o texto lido da imagem (lances, números, palavras) antes de traduzir">

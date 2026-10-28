@@ -59,12 +59,32 @@ def board_cells(gray: np.ndarray, board: tuple[float, float, float, float], scal
     x0, y0, x1, y1 = (round(v * scale) for v in board)
     img = gray[max(0, y0):y1, max(0, x0):x1]
     h, w = img.shape
-    m = max(2, min(h, w) // 60)
-    inner = img[m:h - m, m:w - m]
+    # só a moldura sai (as linhas escuras da borda): uma margem fixa maior encolhia o tabuleiro e as
+    # casas de baixo saíam deslocadas, com a base das peças cortada (o cavalo aberto embaixo sumia)
+    top, bottom = _frame(img < 128, 1), _frame((img < 128)[::-1], 1)
+    left, right = _frame(img < 128, 0), _frame((img < 128)[:, ::-1], 0)
+    inner = img[top:h - bottom, left:w - right]
     ih, iw = inner.shape
     s = min(ih // 8, iw // 8)
-    return np.stack([inner[r * ih // 8:r * ih // 8 + s, c * iw // 8:c * iw // 8 + s]
+    pad = max(1, s // 40)  # um fio da casa vizinha ou da moldura não entra
+    return np.stack([inner[r * ih // 8 + pad:r * ih // 8 + s - pad, c * iw // 8 + pad:c * iw // 8 + s - pad]
                      for r in range(8) for c in range(8)])
+
+
+def _frame(ink: np.ndarray, axis: int) -> int:
+    """Espessura da moldura do lado de ``ink[0]`` (linhas, ``axis=1``) ou de ``ink[:, 0]`` (colunas)."""
+    fill = ink.mean(axis=axis)
+    limit = max(2, len(fill) // 25)
+    # a linha da moldura pode estar uns pixels para dentro (digitalização torta) ou já fora do recorte
+    hits = [i for i in range(limit) if fill[i] > 0.5]
+    if not hits:
+        return 0
+    n = hits[0]
+    while n < limit and fill[n] > 0.5:
+        n += 1
+    while n < limit and fill[n] > 0.2:  # a borda borrada da linha
+        n += 1
+    return n
 
 
 def silhouettes(cells: np.ndarray) -> tuple[np.ndarray, np.ndarray]:

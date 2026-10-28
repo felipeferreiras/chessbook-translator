@@ -405,6 +405,21 @@ def approve(project_id: str, segment_id: str, body: ApproveIn) -> dict:
     return _view(store.segment(segment_id))
 
 
+class DiscardIn(BaseModel):
+    discarded: bool = True
+    author: str = Field(min_length=1, max_length=80)
+
+
+@app.post("/api/projects/{project_id}/segments/{segment_id}/discard")
+def discard(project_id: str, segment_id: str, body: DiscardIn) -> dict:
+    """Lixo do OCR (sujeira, borda): fora da tradução; a página fica como a imagem ali."""
+    store = _store(project_id)
+    try:
+        return _view(store.discard(_segment_id(segment_id), body.author, body.discarded))
+    except StoreError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
 @app.post("/api/projects/{project_id}/pages/{page}/approve")
 def approve_page(project_id: str, page: int, body: AuthorIn) -> dict:
     """Aprova o que a página tem de traduzido e confirma os diagramas com posição completa;

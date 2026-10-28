@@ -23,6 +23,7 @@ from .sections import SectionInfo, assign_sections
 _CHECK_WARNINGS = {"check_marker_without_check", "missing_check_marker", "mate_marker_without_mate"}
 # bloco curto ilegível do OCR (rótulo, coordenada, marca): fica como na imagem sem pedir conferência
 OCR_SHORT_MARK = "ocr: texto curto lido sem confiança"
+_MOVE_LIKE = re.compile(r"^\(?\d{1,3}\.|[a-h][1-8]")
 DIAGRAM_LABEL = re.compile(r"^(?:[WB][?!]*|Play|Draw|Win)(?:\s+(?:[WB][?!]*|Play|Draw|Win))*$")
 
 
@@ -49,7 +50,8 @@ class BookSegment:
                     "o bloco fica no original para revisão")
         text = self.region.resolved.text.strip()
         low = sum(f.startswith("ocr_baixa_confianca") for f in self.region.source_flags)
-        if len(text) <= 12 and low:
+        # lance curto mal lido ("28...Belt!", "29.8xel") não é marca: fica à vista para corrigir
+        if len(text) <= 12 and low and not _MOVE_LIKE.search(text):
             return f"{OCR_SHORT_MARK} (rótulo ou marca); fica como na imagem"
         words = len(text.split())
         if words and low / words >= 0.5:

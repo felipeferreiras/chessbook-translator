@@ -446,3 +446,23 @@ def test_discarded_symbol_disappears_and_not_a_symbol_keeps_the_ocr_reading():
     assert page["blocks"][0]["lines"][0]["spans"][0]["text"] == "36.♖e5!? "
     symbols.apply_to_pages({"1": page}, {"1": "", "2": "!", "3": ""})  # "" = fica o que o OCR leu
     assert page["blocks"][0]["lines"][0]["spans"][0]["text"] == "36.♖e5!? "
+
+
+def test_reocr_inherits_confirmed_figurines_onto_the_new_groups():
+    """Com o recorte novo, a dama confirmada antes (desenho guardado do recorte antigo) já não passava
+    de 0,8 contra a dama de agora: não era pintada, saía "W", e o grupo aparecia como "não é peça"."""
+    rng = np.random.default_rng(1)
+    old = rng.random((ocr.SIZE_VEC, ocr.SIZE_VEC)).astype(np.float32)
+    new = np.clip(old + rng.normal(0, 0.25, old.shape), 0, 1).astype(np.float32)
+    other = rng.random(old.shape).astype(np.float32)
+    from app.extraction.glyph_probe import _similarity
+
+    assert ocr.INHERIT_SIMILARITY <= _similarity(new, old) < ocr.MATCH_SIMILARITY
+    confirmed = [ocr.Prototype(old, "♕", 50)]
+    assert ocr._inherited_char(new, confirmed) == "♕"
+    assert ocr._inherited_char(other, confirmed) is None  # nada parecido: sem decisão (não "não é peça")
+    cands = [ocr.PieceCandidate(1, (0, 0, i), "", "f6", "Wf6", new.copy()) for i in range(4)]
+    for c in cands:
+        c.cluster = 7
+    protos = ocr._inherited_prototypes(cands, confirmed)
+    assert protos[0].char == "♕" and ocr.match_prototype(new, protos)[1] > 0.99

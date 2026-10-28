@@ -90,3 +90,26 @@ Em 40 páginas (rótulos dados olhando os grupos): lances com figurina 1568 →
 1626; capturas com figurina 524 → 541. No livro inteiro, 35 grupos, sem
 algarismos, "xf" ou peças cortadas; restam 3 grupos pequenos de dama colada
 (8 ocorrências), que o usuário marca "não é peça".
+
+## Confirmações que não chegavam às páginas (terceiro relato)
+
+O usuário confirmou figurinas, símbolos e peças e viu as páginas iguais: a
+dama ainda "W", "31.♖eG6t!" sem correção, o começo das páginas "cortado", um
+cavalo faltando num diagrama sem como corrigir, e lixo do OCR ("|v") num
+espaço em branco sem como excluir.
+
+| Causa | Correção |
+|---|---|
+| Ao sincronizar depois de atualizar o programa, o OCR é refeito com as figurinas confirmadas antes, mas pelo desenho guardado delas, tirado do recorte antigo. Com o recorte novo a dama deixou de passar de 0,8 contra o protótipo antigo: não era trocada pela letra e saía "W"; o grupo da dama aparecia na tela como "não é peça" (herança sem par virava ""), e confirmar a tela gravava essa decisão errada | os grupos desta leitura herdam a decisão pelo desenho (0,75 e margem) e passam a ser os protótipos; grupo sem nenhum parecido fica sem decisão (não "não é peça"); a tela avisa grupo grande marcado "não é peça" |
+| "♖eG6t!": a casa lida "eG6" não é casa, então o símbolo do fim do lance não era reescrito | "eG6" → "e6" depois de figurina |
+| Começo das colunas na faixa do cabeçalho (até 55 pt): o primeiro parágrafo da coluna da direita vinha logo depois do primeiro da esquerda | ordem refeita depois de saber o que é cabeçalho corrente |
+| Parágrafos só de lances (o começo de muitas páginas de soluções: "31...♖d6!") não apareciam na aba Páginas | aparecem, com "só lances", e podem ser corrigidos |
+| Casas do diagrama recortadas com margem fixa de 1/60 do tabuleiro: a fileira 1 saía deslocada, a base da peça ficava de fora e o cavalo, aberto embaixo, perdia o miolo | só a moldura sai, procurada na borda (pode estar uns pixels para dentro na digitalização torta) |
+| FEN como única forma de corrigir uma posição | o tabuleiro é clicável: escolhe a peça e clica na casa |
+| Lixo do OCR sem saída | "Descartar trecho": fora da tradução, a página fica como a imagem ali, sobrevive à sincronização; os trechos que ficam como na imagem vão recolhidos no fim da página |
+
+Medido no projeto de teste (figurinas, símbolos e peças confirmados numa
+versão anterior), sincronizando com esta versão: lances com figurina 14 861 →
+15 593; lances "W…" 91 → 78; diagramas completos e possíveis 580 → 599 de 617;
+das 593 posições lidas nas duas versões, 586 iguais e 7 diferentes, todas
+peças que faltavam antes (conferidas na imagem).

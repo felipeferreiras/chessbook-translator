@@ -768,7 +768,7 @@ _PIECE_MOVE_RE = re.compile(r"^(?:\(?\d{1,3}\.{0,3}|\(?\.\.\.)?[♔♕♖♗♘K
 
 
 _FIX_ONE_RE = re.compile(r"^((?:\(?\d{1,3}\.{1,3}|\.\.\.)?[♔♕♖♗♘][a-h]?[1-8]?[x:]?[a-h])[lI|\]](?=t?[+†#!?.,;:)]*$)")
-_FIX_RANK_RE = re.compile(r"^((?:\(?\d{1,3}\.{1,3}|\.\.\.)?[♔♕♖♗♘][a-h]?[1-8]?[x:]?[a-h])([sGS])(?=[t†+#!?.,;:)]*$)")
+_FIX_RANK_RE = re.compile(r"^((?:\(?\d{1,3}\.{1,3}|\.\.\.)?[♔♕♖♗♘][a-h]?[1-8]?[x:]?[a-h])(G6|[sGS])(?=[t†+#!?.,;:)]*$)")
 _FIX_NUMBER_RE = re.compile(r"^(\(?\d{1,2})[lI](\d?\.{1,3})(?=\S)")
 _FIX_CHECK_RE = re.compile(r"^((?:\(?\d{1,3}\.{1,3}|\.\.\.)?[♔♕♖♗♘]?[a-h]?[1-8]?[x:]?[a-h][1-8])t(?=[!?]*[.,;:)]*$)")
 
@@ -788,9 +788,9 @@ def fix_move_glyphs(text: str) -> tuple[str, bool]:
     if any(ch in WHITE_FIGURINES for ch in out) or re.match(r"^\(?\d{1,3}\.|^[a-h](?:x[a-h])?[1-8]t", out):
         # coluna lida como símbolo, entre a peça (ou o número, ou o "x") e a fileira: "♕£3" é "♕f3", "¢4" é "g4"
         out = re.sub(r"(?<=[♔♕♖♗♘x.])([£¢])(?=[1-8](?![0-9]))", lambda m: "f" if m.group(1) == "£" else "g", out)
-        # depois da figurina: "♕F7" é "♕f7"; fileira lida como letra no fim do lance: "♔gs" é "♔g8", "♖bG" é "♖b6"
+        # depois da figurina: "♕F7" é "♕f7"; fileira lida como letra no fim do lance: "♔gs" é "♔g8", "♖bG" e "♖eG6" são "♖b6" e "♖e6"
         out = re.sub(r"(?<=[♔♕♖♗♘])(x?)F(?=[1-8](?![0-9]))", r"\1f", out)
-        out = _FIX_RANK_RE.sub(lambda m: m.group(1) + {"s": "8", "G": "6", "S": "5"}[m.group(2)], out)
+        out = _FIX_RANK_RE.sub(lambda m: m.group(1) + {"s": "8", "G": "6", "G6": "6", "S": "5"}[m.group(2)], out)
         out = _FIX_ONE_RE.sub(r"\g<1>1", out)
         out = _FIX_CHECK_RE.sub(r"\g<1>†", out)
         # "?" lido como "2" logo depois da casa: "d52!" é "d5?!", "e5!2" é "e5!?" (não há casa com 3 caracteres)
@@ -1390,9 +1390,10 @@ def document_ocr(doc: pymupdf.Document, cache: object = None, lang: str = "eng",
     labels = None
     if confirmed is not None:  # os grupos novos herdam a decisão do usuário pelo desenho
         labels = {}
-        for g in groups:
-            char, score, _margin = match_prototype(g.vec, confirmed) if confirmed else ("", 0.0, 0.0)
-            labels[str(g.id)] = char if score >= MATCH_SIMILARITY else ""
+        for g in groups:  # sem nenhuma parecida: fica sem decisão, para o usuário ver
+            char = _inherited_char(g.vec, confirmed)
+            if char is not None:
+                labels[str(g.id)] = char
     return _save_pages(path, version(lang), results, [group_json(g) for g in groups], labels, used)
 
 
@@ -1449,6 +1450,33 @@ def reread_with_figurines(doc: pymupdf.Document, cache, labels: dict[int, str], 
             "uncertain": sum(r.pieces_uncertain for r in results.values())}
 
 
+INHERIT_SIMILARITY = 0.75  # grupo novo × figurina confirmada num OCR anterior
+
+
+def _inherited_char(vec: np.ndarray, confirmed: list[Prototype]) -> str | None:
+    """A decisão do usuário para este desenho: a figurina, "" (não é peça) ou None (nenhuma parecida)."""
+    if not confirmed:
+        return None
+    char, score, margin = match_prototype(vec, confirmed)
+    return char if score >= INHERIT_SIMILARITY and margin >= PROTOTYPE_MIN_MARGIN else None
+
+
+def _inherited_prototypes(cands: list[PieceCandidate], confirmed: list[Prototype]) -> list[Prototype]:
+    """Protótipos de um OCR refeito: os grupos desta leitura, com a figurina confirmada antes.
+
+    Os desenhos guardados vêm do recorte da versão em que o usuário confirmou; com o recorte de agora
+    (a peça inteira, sem o "x" colado) a dama deixava de se parecer com o protótipo antigo, não era
+    trocada pela letra e voltava a sair "W". Os grupos novos herdam a decisão pelo desenho e servem
+    de protótipo; os antigos ficam de reserva.
+    """
+    inherited = []
+    for g in figurine_groups(cands):
+        char = _inherited_char(g.vec, confirmed)
+        if char is not None:
+            inherited.append(Prototype(g.vec, char, g.count))
+    return inherited + confirmed
+
+
 def ocr_document_detailed(doc: pymupdf.Document, pages: list[int], lang: str = "eng", dpi: int = OCR_DPI,
                           progress=None, confirmed: list[Prototype] | None = None
                           ) -> tuple[dict[int, OcrPage], list[PageScan], list[FigurineGroup], list[Prototype]]:
@@ -1461,7 +1489,7 @@ def ocr_document_detailed(doc: pymupdf.Document, pages: list[int], lang: str = "
             progress("ocr", i + 1, len(pages))
     cands = [c for s in scans for c in s.candidates]
     label_pieces(cands)
-    protos = confirmed if confirmed is not None else prototypes(cands)
+    protos = prototypes(cands) if confirmed is None else _inherited_prototypes(cands, confirmed)
     out = {}
     for i, s in enumerate(scans):
         out[s.page] = read_page(doc[s.page - 1], s, protos, lang, dpi)

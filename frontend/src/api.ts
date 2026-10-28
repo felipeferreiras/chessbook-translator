@@ -25,6 +25,7 @@ export interface Segment {
   needs_attention: boolean;
   kept_as_image: boolean;
   source_extracted: string | null;
+  discarded: boolean;
 }
 
 export interface Reprocess {
@@ -316,6 +317,11 @@ export const api = {
     call<Segment>(`${p(id)}/segments/${seg}/revert`, { method: "POST", body: JSON.stringify({ version, author }) }),
   editSource: (id: string, seg: string, text: string, author: string) =>
     call<Segment>(`${p(id)}/segments/${seg}/source`, { method: "PUT", body: JSON.stringify({ text, author }) }),
+  discard: (id: string, seg: string, discarded: boolean, author: string) =>
+    call<Segment>(`${p(id)}/segments/${seg}/discard`, {
+      method: "POST",
+      body: JSON.stringify({ discarded, author }),
+    }),
   approve: (id: string, seg: string, approved: boolean, author: string) =>
     call<Segment>(`${p(id)}/segments/${seg}/approve`, {
       method: "POST",

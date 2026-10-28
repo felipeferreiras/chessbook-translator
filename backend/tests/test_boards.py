@@ -77,3 +77,22 @@ def test_impossible_positions_are_reported():
     assert any("reis" in x for x in boards.check_placement("8/8/8/8/8/8/8/K7"))
     assert any("peão" in x for x in boards.check_placement("P3k3/8/8/8/8/8/8/4K3"))
     assert boards.check_placement("8/8") == ["posição mal formada"]
+
+
+def test_cells_follow_the_frame_not_a_fixed_margin():
+    """Com uma margem fixa (1/60 do tabuleiro) as casas de baixo saíam deslocadas para cima e a base
+    das peças ficava de fora: o cavalo, aberto embaixo, perdia o miolo fechado e a casa parecia vazia."""
+    import numpy as np
+
+    from app.extraction import boards
+
+    side, frame = 606, 3
+    img = np.full((side, side), 255, np.uint8)
+    img[:frame], img[-frame:], img[:, :frame], img[:, -frame:] = 0, 0, 0, 0
+    sq = (side - 2 * frame) / 8
+    y0 = round(frame + 7 * sq)  # fileira 1: um traço na base da casa a1
+    img[y0 + int(sq) - 6:y0 + int(sq) - 2, frame + 10:frame + 60] = 0
+    cells = boards.board_cells(img, (0, 0, side, side), 1.0)
+    bottom = cells[56]
+    assert (bottom < 128).any(axis=1)[-12:].any()  # a base da peça está dentro da casa
+    assert not (cells[48] < 128).any()  # e não vazou para a casa de cima

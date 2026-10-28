@@ -166,5 +166,12 @@ input, select, textarea { max-width: 100%; min-width: 0; }
 .board span { display: flex; aspect-ratio: 1; min-height: 0; align-items: center; justify-content: center; font-size: clamp(14px, 3.2vw, 24px); line-height: 1; color: #111; }
 .board .light { background: #f3efe6; }
 .board .dark { background: #b9a888; }
+.board.editable button { display: flex; aspect-ratio: 1; min-height: 0; padding: 0; border: 0; border-radius: 0; align-items: center; justify-content: center; font: inherit; font-size: clamp(14px, 3.2vw, 24px); line-height: 1; color: #111; cursor: pointer; }
+.board.editable button:hover, .board.editable button:focus-visible { outline: 2px solid var(--accent, #2a6df4); outline-offset: -2px; }
+.palette { display: flex; flex-wrap: wrap; gap: 4px; margin: 8px 0 4px; }
+.palette button { min-width: 32px; padding: 2px 6px; font-family: "FreeSerif", "DejaVu Sans", serif; font-size: 20px; line-height: 1.2; }
+.palette button.on { outline: 2px solid var(--accent, #2a6df4); }
+details.as-image { margin: 12px 0; }
+details.as-image > summary { cursor: pointer; color: var(--muted, #666); }
 .segment.diagram img { max-width: 100%; height: auto; background: #fff; }
 .segment.diagram input { width: 100%; font-family: ui-monospace, monospace; font-size: 12px; }

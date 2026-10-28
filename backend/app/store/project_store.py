@@ -93,6 +93,7 @@ _MIGRATIONS = (
     ("job", "heartbeat_at", "TEXT"),
     ("job", "resumed_from", "INTEGER"),
     ("segment", "source_extracted", "TEXT"),  # o texto como foi lido, quando o usuário corrigiu o original
+    ("segment", "discarded", "INTEGER NOT NULL DEFAULT 0"),  # lixo do OCR descartado pelo revisor
 )
 
 # O que retraduzir (``select_sources``). Uma versão humana nunca entra: a tradução nova não a substituiria.
@@ -168,11 +169,12 @@ class SegmentView:
     machine_problems: list[str]
     source_flags: list[str] = field(default_factory=list)  # dúvidas sobre o texto de origem (OCR)
     source_extracted: str | None = None  # o texto lido, se o original foi corrigido pelo usuário
+    discarded: bool = False  # lixo do OCR descartado pelo revisor: não é traduzido, a página fica como a imagem
 
     @property
     def kept_as_image(self) -> bool:
-        """Bloco do OCR que fica como na imagem (rótulo, marca, desenho lido como letras)."""
-        return self.status == "blocked" and any(p.startswith("ocr:") for p in self.machine_problems)
+        """Bloco do OCR que fica como na imagem (rótulo, marca, desenho lido como letras, lixo descartado)."""
+        return self.discarded or (self.status == "blocked" and any(p.startswith("ocr:") for p in self.machine_problems))
 
     @property
     def needs_attention(self) -> bool:
@@ -181,8 +183,10 @@ class SegmentView:
 
         O aviso geral de todo texto de OCR (``OCR_FLAG``) não conta: num livro
         digitalizado ele marcaria todos os parágrafos e esconderia os que importam.
-        Um rótulo curto ilegível fica como na imagem sem pedir nada.
+        Um rótulo curto ilegível fica como na imagem sem pedir nada; um trecho descartado também.
         """
+        if self.discarded:
+            return False
         if self.status in ("needs_review", "failed"):
             return True
         if self.status == "blocked":
@@ -453,7 +457,7 @@ class ProjectStore:
                               v["created_at"], v["provider"], v["model"])
         return SegmentView(row["id"], row["page"], row["ordinal"], row["section"], row["source"], row["status"],
                            bool(row["approved"]), current, json.loads(row["machine_problems_json"]),
-                           json.loads(row["source_flags_json"]), row["source_extracted"])
+                           json.loads(row["source_flags_json"]), row["source_extracted"], bool(row["discarded"]))
 
     def segments(self, page: int | None = None) -> list[SegmentView]:
         with self._db() as db:
@@ -485,8 +489,8 @@ class ProjectStore:
         for r in rows:
             if r["page"] not in pages:
                 continue
-            if r["status"] == "obsolete" or (
-                    only_pending and (r["current_version"] is not None or r["status"] in ("not_needed", "blocked"))):
+            if r["status"] == "obsolete" or (only_pending and (
+                    r["current_version"] is not None or r["status"] in ("not_needed", "blocked") or r["discarded"])):
                 continue
             out.append((r["section"], SourceSegment(r["id"], r["source"], kind=r["kind"],
                                                     bold=tuple(json.loads(r["bold_json"])),
@@ -509,7 +513,7 @@ class ProjectStore:
             return items, {}
         glossary = self.glossary() if mode == "glossary" else None
         style = self.style
-        skipped = {"human": 0, "not_needed": 0, "blocked": 0, "no_glossary_record": 0}
+        skipped = {"human": 0, "not_needed": 0, "blocked": 0, "discarded": 0, "no_glossary_record": 0}
         out = []
         with self._db() as db:
             rows = db.execute("SELECT s.*, t.kind AS vkind, t.warnings_json, t.glossary_sig FROM segment s"
@@ -520,6 +524,9 @@ class ProjectStore:
             if (r["page"] not in pages and mode != "ids") or r["id"] in exclude:
                 continue
             if mode == "ids" and r["id"] not in ids:
+                continue
+            if r["discarded"]:
+                skipped["discarded"] += 1
                 continue
             if r["status"] in ("not_needed", "blocked"):
                 skipped[r["status"]] += 1
@@ -669,6 +676,20 @@ class ProjectStore:
             self._log(db, "segment", segment_id, "approve" if approved else "unapprove", None,
                       str(row["current_version"]), author)
 
+    def discard(self, segment_id: str, author: str, discarded: bool = True) -> SegmentView:
+        """Descarta um trecho que o OCR leu onde não há texto (sujeira, borda, mancha): não vai ao
+        tradutor e a página fica como a imagem original ali. Vale depois de sincronizar; pode ser desfeito."""
+        with self._db() as db:
+            row = db.execute("SELECT * FROM segment WHERE id=?", (segment_id,)).fetchone()
+            if row is None:
+                raise StoreError(f"segmento inexistente: {segment_id}")
+            if OCR_FLAG not in json.loads(row["source_flags_json"]):
+                raise StoreError("só um trecho lido por OCR pode ser descartado")
+            db.execute("UPDATE segment SET discarded=?, approved=? WHERE id=?",
+                       (int(discarded), int(discarded), segment_id))
+            self._log(db, "segment", segment_id, "discard" if discarded else "undiscard", None, None, author)
+            return self._view(db, db.execute("SELECT * FROM segment WHERE id=?", (segment_id,)).fetchone())
+
     def approve_page(self, page: int, author: str) -> dict:
         """Aprova de uma vez o que a página tem de traduzido (ou mantido como na imagem).
 
@@ -715,7 +736,10 @@ class ProjectStore:
                 if row["current_version"]:
                     v = db.execute("SELECT * FROM translation WHERE segment_id=? AND version=?",
                                    (row["id"], row["current_version"])).fetchone()
-                if v is not None:
+                if row["discarded"]:  # lixo do OCR: a página fica como a imagem ali
+                    v = None
+                    status, text = "discarded", None
+                elif v is not None:
                     status, text = ("translated" if v["kind"] == "machine" else "reviewed"), v["text"]
                 else:  # sem tradução: só notação (copiada) ou pendente (o original fica na página)
                     status, text = row["status"], row["source"] if row["status"] == "not_needed" else None

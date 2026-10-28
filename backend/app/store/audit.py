@@ -29,7 +29,7 @@ from app.translation.guard import PLACEHOLDER_RE, TAG_RE, GuardViolation, mask_e
 
 from .project_store import ProjectStore
 
-FINAL = {"translated", "cached", "not_needed", "reviewed"}
+FINAL = {"translated", "cached", "not_needed", "reviewed", "discarded"}
 
 
 def audit(store: ProjectStore, check_extraction: bool = True) -> dict:
@@ -69,12 +69,13 @@ def audit(store: ProjectStore, check_extraction: bool = True) -> dict:
                           " ON t.segment_id = s.id AND t.version = s.current_version"
                           " WHERE s.status != 'obsolete' ORDER BY s.ordinal").fetchall()
     for r in rows:
-        state = ("reviewed" if r["vkind"] in ("edit", "revert") else "translated") if r["vtext"] is not None \
+        state = "discarded" if r["discarded"] else \
+            ("reviewed" if r["vkind"] in ("edit", "revert") else "translated") if r["vtext"] is not None \
             else r["status"]
         states[state] += 1
         if state not in FINAL:
             unfinished.append(r["id"])
-        if r["vtext"] is None:
+        if r["vtext"] is None or r["discarded"]:
             continue
         prot = protect(r["source"], style, json.loads(r["bold_json"]), json.loads(r["italic_json"]))
         try:

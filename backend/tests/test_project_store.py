@@ -253,3 +253,25 @@ def test_ocr_source_can_be_corrected_before_translation_and_survives_sync(bare):
     assert exported["source"] == read and exported["source_text"] == "After 22...♕c4†!! Black wins."
     # voltar ao texto lido desfaz a correção
     assert bare.edit_source("p1-0", read, "revisor").source_extracted is None
+
+
+def test_ocr_junk_can_be_discarded_and_stays_out_after_sync(bare):
+    """"|v" lido num espaço em branco: descartado, sai da tradução e da conferência; a página fica
+    como a imagem ali; a decisão sobrevive à sincronização e pode ser desfeita."""
+    from app.pipeline.notation_pass import OCR_FLAG
+
+    segs = [{"id": "p1-0", "page": 1, "source": "White wins the queen.", "flags": [OCR_FLAG]},
+            {"id": "p1-1", "page": 1, "source": "iii Wy kaw", "flags": [OCR_FLAG]},
+            {"id": "p1-2", "page": 1, "source": "Digital text."}]
+    bare.add_book_segments(segs)
+    with pytest.raises(StoreError):
+        bare.discard("p1-2", "revisor")  # só o que veio do OCR
+    seg = bare.discard("p1-1", "revisor")
+    assert seg.discarded and seg.kept_as_image and seg.approved and not seg.needs_attention
+    assert [s.id for _, s in bare.sources({1})] == ["p1-0", "p1-2"]
+    bare.sync_segments(segs, "teste")
+    assert bare.segment("p1-1").discarded
+    exported = {s["id"]: s for s in bare.export_result()["segments"]}
+    assert exported["p1-1"]["status"] == "discarded" and exported["p1-1"]["text"] is None
+    assert not bare.discard("p1-1", "revisor", False).discarded
+    assert [s.id for _, s in bare.sources({1})] == ["p1-0", "p1-1", "p1-2"]
