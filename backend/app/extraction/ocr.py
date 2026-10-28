@@ -303,7 +303,11 @@ def _piece_crop(gray: np.ndarray, word: OcrWord, line: OcrLine, k: int) -> tuple
             x0 = word.chars[i].bbox[2] + 1
             break
     y0, y1 = line.bbox[1], line.bbox[3]
-    cols = (gray[y0:y1, x0:word.bbox[2]] < 128).any(axis=0)
+    # a caixa do ponto às vezes cobre o começo da figurina: volta até o começo do desenho
+    while x0 > word.bbox[0] and (gray[y0:y1, x0 - 1] < 128).any() and (gray[y0:y1, x0] < 128).any():
+        x0 -= 1
+    ink = gray[y0:y1, x0:word.bbox[2]] < 128
+    cols = ink.any(axis=0)
     i = 0
     while i < cols.size:
         if not cols[i]:
@@ -313,7 +317,14 @@ def _piece_crop(gray: np.ndarray, word: OcrWord, line: OcrLine, k: int) -> tuple
         while i + 1 < cols.size and cols[i + 1]:
             i += 1
         if i + 1 - start >= 0.3 * size:
-            return gray[y0:y1, x0 + start:x0 + i + 1], x0 + i + 1
+            end = i + 1
+            if end - start > 1.25 * size:
+                # figurina colada no "x" ou na casa ("♕xf6"): corta na coluna de menos tinta onde a
+                # figurina acaba, senão o grupo vira "♕xf6" e pintar a letra apagava a captura
+                lo, hi = start + int(0.6 * size), min(end - 1, start + int(1.25 * size))
+                if hi > lo:
+                    end = lo + int(np.argmin(ink[:, lo:hi].sum(axis=0)))
+            return gray[y0:y1, x0 + start:x0 + end], x0 + end
         i += 1
     return None
 

@@ -250,10 +250,17 @@ def suggest(vec: np.ndarray, height: float, read: list[str], figurines=None) -> 
     # sem confirmação, só o que é claro pelo desenho e não contradiz o OCR, ou o que os dois dizem
     if (score >= 0.75 and score - runner >= 0.1 and (agrees or not read or not read[0])) or (score >= 0.6 and agrees):
         return best, score, score - runner
+    # algarismo da casa que entrou no recorte (a caixa do Tesseract deslocada): descartar. Só quando o
+    # algarismo ganha com folga, não é o "1" (parecido demais com "!") e o OCR não leu letra ali.
+    digit, dchar = max(((_sim(vec, r), ch) for ch, r in _references(DIGITS)), default=(0.0, ""))
+    if (digit >= 0.6 and digit >= score + 0.15 and dchar != "1"
+            and not any(ch.isalpha() for ch in (read[0] if read else ""))):
+        return DISCARD, digit, digit - score
     return "", score, score - runner
 
 
-VALID_LABEL = re.compile(f"^[{re.escape(SYMBOLS + PIECES)}]*$")
+DISCARD = "∅"  # o desenho não é símbolo nem texto: o algarismo da casa que entrou no recorte, sujeira
+VALID_LABEL = re.compile(f"^(?:{DISCARD}|[{re.escape(SYMBOLS + PIECES)}]*)$")
 
 
 # --- livro inteiro: grupos guardados no ocr.json, decisões do usuário em ocr-simbolos.json ---------
@@ -338,8 +345,9 @@ def apply_to_pages(pages: dict, labels: dict[str, str]) -> dict[str, int]:
             span = block["lines"][ln]["spans"][sp]
             original = head + read + tail
             reads = rest[0] if rest else [""] * len(gids)
-            # "" = não é símbolo: fica o que o OCR leu naquele trecho (letra, algarismo da casa)
-            chosen = [r if (lab := labels.get(str(g))) == "" else lab for g, r in zip(gids, reads, strict=True)]
+            # "" = não é símbolo: fica o que o OCR leu naquele trecho; DISCARD = some (algarismo da casa repetido)
+            chosen = [r if (lab := labels.get(str(g))) == "" else "" if lab == DISCARD else lab
+                      for g, r in zip(gids, reads, strict=True)]
             ok = all(c is not None for c in chosen)
             text = head + "".join(chosen) + tail if ok else original
             span["text"] = text + (" " if span["text"].endswith(" ") else "")

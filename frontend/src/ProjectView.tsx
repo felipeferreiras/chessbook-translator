@@ -194,7 +194,9 @@ const SYMBOL_OPTIONS: [string, string][] = [
   ["∞", "∞ pouco claro"], ["−", "− (de +− e −+)"], ["♕", "♕ dama (promoção)"], ["♖", "♖ torre (promoção)"],
   ["♗", "♗ bispo (promoção)"], ["♘", "♘ cavalo (promoção)"], ["=♕", "=♕ promoção a dama"],
   ["", "não é símbolo (fica o que o OCR leu)"],
+  ["∅", "descartar (algarismo da casa ou sujeira)"],
 ];
+const UNSET = "__";  // "— escolha —": não é enviado (o "?" é um símbolo de verdade)
 
 const PIECE_OPTIONS: [string, string][] = [
   ["K", "♔ rei branco"], ["Q", "♕ dama branca"], ["R", "♖ torre branca"], ["B", "♗ bispo branco"],
@@ -245,7 +247,7 @@ function GroupsPanel(props: { kind: "figurines" | "symbols" | "pieces"; projectI
       const initial: Record<string, string> = {};
       for (const g of f.groups) {
         // símbolos e peças: sem confirmação nem sugestão, fica "— escolha —" e não é enviado
-        initial[g.id] = f.labels[g.id] ?? (figurines ? ((g.margin ?? 0) >= 0.05 ? g.auto : "") : (g.auto || "?"));
+        initial[g.id] = f.labels[g.id] ?? (figurines ? ((g.margin ?? 0) >= 0.05 ? g.auto : "") : (g.auto || UNSET));
       }
       setLabels(initial);
     }, (e) => setError(String(e)));
@@ -256,7 +258,7 @@ function GroupsPanel(props: { kind: "figurines" | "symbols" | "pieces"; projectI
   const options = figurines ? PIECES : props.kind === "symbols" ? SYMBOL_OPTIONS : PIECE_OPTIONS;
   const submit = async () => {
     setError("");
-    const chosen = Object.fromEntries(Object.entries(labels).filter(([, v]) => v !== "?"));
+    const chosen = Object.fromEntries(Object.entries(labels).filter(([, v]) => v !== UNSET));
     try {
       props.onStart(await (figurines ? api.setFigurines(props.projectId, chosen, props.author)
         : props.kind === "symbols" ? api.setSymbols(props.projectId, chosen, props.author)
@@ -285,8 +287,8 @@ function GroupsPanel(props: { kind: "figurines" | "symbols" | "pieces"; projectI
                   <img src={g.image} alt={`grupo ${g.id}`} width={48} height={48} />
                   <select value={labels[g.id] ?? ""} aria-label={`Grupo ${g.id}`}
                           onChange={(e) => setLabels({ ...labels, [g.id]: e.target.value })}>
-                    {!figurines && <option value="?">— escolha —</option>}
-                    {!figurines && labels[g.id] !== "?" && !options.some(([v]) => v === (labels[g.id] ?? "")) && (
+                    {!figurines && <option value={UNSET}>— escolha —</option>}
+                    {!figurines && labels[g.id] !== UNSET && !options.some(([v]) => v === (labels[g.id] ?? "")) && (
                       <option value={labels[g.id]}>{labels[g.id]}</option>
                     )}
                     {options.map(([v, t]) => <option key={v} value={v}>{t}</option>)}

@@ -356,3 +356,34 @@ def test_symbols_after_moves_are_read_by_their_drawing(tmp_path):
     cache.write_text(json.dumps({**stored, "version": "antiga"}))
     text = " ".join(r.resolved.text for r in collect(pymupdf.open(pdf), ocr_cache=cache, ocr_mode="on").regions)
     assert "9.e5⩲" in text
+
+
+def test_figurine_touching_the_capture_x_is_cut_at_the_figurine():
+    """"♕xf6" com a dama encostada no "x": o recorte é só a dama (senão o grupo vira "♕xf6" e pintar
+    a letra apagava a captura)."""
+    from PIL import Image, ImageDraw, ImageFont
+
+    font = ImageFont.truetype(str(syn.DEJAVU), 60)
+    img = Image.new("L", (400, 100), 255)
+    draw = ImageDraw.Draw(img)
+    draw.text((10, 10), "♕", font=font, fill=0)
+    queen_end = 10 + int(draw.textlength("♕", font=font))
+    draw.text((queen_end - 6, 10), "xf6", font=font, fill=0)  # encostado
+    gray = np.asarray(img)
+    cols = np.flatnonzero((gray < 128).any(axis=0))
+    line = ocr.OcrLine((0, 0, 400, 100), 60.0, [])
+    word = ocr.OcrWord("Wxf6", (int(cols[0]), 0, int(cols[-1]) + 1, 100), 90.0, [])
+    crop, end = ocr._piece_crop(gray, word, line, 0)
+    assert end <= queen_end + 2 and crop.shape[1] <= 1.25 * 60
+
+
+def test_discarded_symbol_disappears_and_not_a_symbol_keeps_the_ocr_reading():
+    from app.extraction import symbols
+
+    assert symbols.VALID_LABEL.match(symbols.DISCARD) and symbols.VALID_LABEL.match("?")
+    page = {"blocks": [{"lines": [{"spans": [{"text": "36.♖e5!? "}]}], "ocr_warnings": []}],
+            "suffixes": [[0, 0, 0, "36.♖e5", "", "5!?", [1, 2, 3], ["", "!", "?"]]]}
+    symbols.apply_to_pages({"1": page}, {"1": symbols.DISCARD, "2": "!", "3": "?"})
+    assert page["blocks"][0]["lines"][0]["spans"][0]["text"] == "36.♖e5!? "
+    symbols.apply_to_pages({"1": page}, {"1": "", "2": "!", "3": ""})  # "" = fica o que o OCR leu
+    assert page["blocks"][0]["lines"][0]["spans"][0]["text"] == "36.♖e5!? "
