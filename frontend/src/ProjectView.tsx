@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, Creation, FigurineInfo, Project, Reprocess, Settings } from "./api";
+import { api, Creation, Project, Reprocess, Settings } from "./api";
 
 const OCR_LABEL: Record<string, string> = {
   auto: "Automático (só se a maioria do livro for digitalizada)",
@@ -168,7 +168,8 @@ const PIECES: [string, string][] = [["♔", "♔ rei"], ["♕", "♕ dama"], ["�
 const STAGE: Record<string, string> = { "extração": "lendo o livro", ocr: "OCR", figurinas: "figurinas" };
 
 function reprocessText(r: Reprocess): string {
-  const what = r.kind === "figurines" ? "Releitura com as figurinas" : "Sincronização";
+  const what = r.kind === "figurines" ? "Releitura com as figurinas"
+    : r.kind === "symbols" ? "Reescrita dos lances com os símbolos" : "Sincronização";
   if (r.state === "running") {
     const pr = r.progress;
     return `${what} em andamento` + (pr ? `: ${STAGE[pr.stage] ?? pr.stage} ${pr.done}/${pr.total} páginas` : "…");
@@ -177,66 +178,99 @@ function reprocessText(r: Reprocess): string {
     const x = r.result;
     return `${what} concluída. Mantidos ${x.kept}, renomeados ${x.renamed}, novos ${x.added}, removidos ${x.removed}, ` +
       `guardados como obsoletos ${x.obsolete}, para retraduzir ${x.retranslate}` +
-      (x.ocr_pieces !== undefined ? `; ${x.ocr_pieces} lances com peça lidos (${x.ocr_uncertain} com dúvida).` : ".") +
+      (x.ocr_pieces !== undefined ? `; ${x.ocr_pieces} lances com peça lidos (${x.ocr_uncertain} com dúvida).`
+        : x.ocr_moves !== undefined ? `; ${x.ocr_moves} lances com símbolos decididos (${x.ocr_uncertain} sem).` : ".") +
       (x.added ? " Os parágrafos novos ficam pendentes: Traduzir → pendentes." : "");
   }
   return `${what}: ${r.error ?? r.state}`;
 }
 
-/** As figurinas que o OCR achou no livro, agrupadas pelo desenho: o usuário diz qual peça é cada grupo. */
-function FigurinesPanel(props: { projectId: string; author: string; busy: boolean; onStart: (r: Reprocess) => void }) {
-  const [info, setInfo] = useState<FigurineInfo | null>(null);
+const SYMBOL_OPTIONS: [string, string][] = [
+  ["†", "† xeque"], ["+", "+ xeque"], ["#", "# mate"], ["!", "!"], ["?", "?"], ["!!", "!!"], ["??", "??"],
+  ["!?", "!?"], ["?!", "?!"], ["±", "± brancas melhor"], ["∓", "∓ pretas melhor"],
+  ["⩲", "⩲ brancas um pouco melhor"], ["⩱", "⩱ pretas um pouco melhor"], ["=", "= igual / promoção"],
+  ["∞", "∞ pouco claro"], ["−", "− (de +− e −+)"], ["♕", "♕ dama (promoção)"], ["♖", "♖ torre (promoção)"],
+  ["♗", "♗ bispo (promoção)"], ["♘", "♘ cavalo (promoção)"], ["=♕", "=♕ promoção a dama"],
+  ["", "não é símbolo (some)"],
+];
+
+type GroupInfo = { available: boolean; reason: string; labels: Record<string, string>;
+                   groups: { id: number; count: number; auto: string; margin?: number; ocr?: string[];
+                             read?: string[]; image: string }[] };
+
+/** Grupos de desenhos achados pelo OCR (figurinas no começo dos lances, símbolos depois da casa):
+ * o usuário diz o que é cada grupo, e o livro é reescrito com isso. */
+function GroupsPanel(props: { kind: "figurines" | "symbols"; projectId: string; author: string; busy: boolean;
+                              onStart: (r: Reprocess) => void }) {
+  const figurines = props.kind === "figurines";
+  const [info, setInfo] = useState<GroupInfo | null>(null);
   const [labels, setLabels] = useState<Record<string, string>>({});
   const [error, setError] = useState("");
 
   useEffect(() => {
-    api.figurines(props.projectId).then((f) => {
+    const load = figurines ? api.figurines(props.projectId) : api.symbols(props.projectId);
+    load.then((f: GroupInfo) => {
       setInfo(f);
       const initial: Record<string, string> = {};
-      for (const g of f.groups) initial[g.id] = f.labels[g.id] ?? (g.margin >= 0.05 ? g.auto : "");
+      for (const g of f.groups) {
+        initial[g.id] = f.labels[g.id] ?? (figurines ? ((g.margin ?? 0) >= 0.05 ? g.auto : "") : g.auto);
+      }
       setLabels(initial);
     }, (e) => setError(String(e)));
-  }, [props.projectId, props.busy]);
+  }, [props.projectId, props.busy, figurines]);
 
   if (!info || (!info.available && !info.reason.includes("versão anterior"))) return null;
   const confirmed = Object.keys(info.labels).length > 0;
+  const options = figurines ? PIECES : SYMBOL_OPTIONS;
   const submit = async () => {
     setError("");
     try {
-      props.onStart(await api.setFigurines(props.projectId, labels, props.author));
+      props.onStart(await (figurines ? api.setFigurines(props.projectId, labels, props.author)
+        : api.setSymbols(props.projectId, labels, props.author)));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
   };
   return (
     <div className="panel">
-      <h3>Figurinas do livro</h3>
+      <h3>{figurines ? "Figurinas do livro" : "Símbolos do livro"}</h3>
       {!info.available ? (
         <p className="muted small">{info.reason}.</p>
       ) : (
         <>
           <p className="muted small">
-            Desenhos iguais achados no começo dos lances. Confira cada grupo e escolha a peça; depois, o livro é
-            relido com elas (alguns minutos) e só os parágrafos cujo texto mudou voltam a pendentes.
+            {figurines
+              ? "Desenhos iguais achados no começo dos lances. Confira cada grupo e escolha a peça; depois, o livro é " +
+                "relido com elas (alguns minutos) e só os parágrafos cujo texto mudou voltam a pendentes."
+              : "Desenhos iguais achados depois da casa dos lances: xeque, mate, ! e ?, avaliação (± ⩲ ⩱ ∓ = ∞) e a " +
+                "peça da promoção. Confira cada grupo; o fim dos lances é reescrito com o símbolo escolhido (segundos). " +
+                "Grupo sem símbolo decidido deixa o lance como o OCR leu, com aviso."}
             {confirmed ? " As escolhas atuais já foram confirmadas." : " Nada foi confirmado ainda: os valores são sugestões."}
           </p>
           <ul className="figurines">
             {info.groups.map((g) => {
-              const doubtful = !(String(g.id) in info.labels) && g.margin < 0.05;
+              const read = (figurines ? g.ocr : g.read) ?? [];
+              const doubtful = !(String(g.id) in info.labels) && (figurines ? (g.margin ?? 0) < 0.05 : !g.auto);
               return (
                 <li key={g.id} className={doubtful ? "doubt" : ""}>
                   <img src={g.image} alt={`grupo ${g.id}`} width={48} height={48} />
-                  <select value={labels[g.id] ?? ""} aria-label={`Peça do grupo ${g.id}`}
+                  <select value={labels[g.id] ?? ""} aria-label={`Grupo ${g.id}`}
                           onChange={(e) => setLabels({ ...labels, [g.id]: e.target.value })}>
-                    {PIECES.map(([v, t]) => <option key={v} value={v}>{t}</option>)}
+                    {!figurines && !options.some(([v]) => v === (labels[g.id] ?? "")) && (
+                      <option value={labels[g.id]}>{labels[g.id]}</option>
+                    )}
+                    {options.map(([v, t]) => <option key={v} value={v}>{t}</option>)}
                   </select>
-                  <small>{g.count} lances · OCR leu “{g.ocr.join(" ") || "?"}”{doubtful ? " · sugestão incerta" : ""}</small>
+                  <small>
+                    {g.count} {figurines ? "lances" : "vezes"} · OCR leu “{read.join(" ") || "?"}”
+                    {doubtful ? (figurines ? " · sugestão incerta" : " · sem sugestão") : ""}
+                  </small>
                 </li>
               );
             })}
           </ul>
           <button className="primary" disabled={props.busy || !props.author.trim()} onClick={submit}>
-            Confirmar e reler o livro
+            {figurines ? "Confirmar e reler o livro" : "Confirmar e reescrever os lances"}
           </button>
         </>
       )}
@@ -303,7 +337,10 @@ export default function ProjectView(props: { project: Project | null; author: st
           {error && <p className="bad small" role="alert">{error}</p>}
         </div>
       )}
-      {project && <FigurinesPanel projectId={project.id} author={props.author} busy={running} onStart={setTask} />}
+      {project && <GroupsPanel kind="figurines" projectId={project.id} author={props.author} busy={running}
+                               onStart={setTask} />}
+      {project && <GroupsPanel kind="symbols" projectId={project.id} author={props.author} busy={running}
+                               onStart={setTask} />}
       <NewProject settings={settings} onCreated={props.onOpen} />
       <RestoreBackup onRestored={props.onOpen} />
       {settings && (

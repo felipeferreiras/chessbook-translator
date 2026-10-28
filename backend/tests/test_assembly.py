@@ -125,8 +125,9 @@ def test_audit_confirms_a_complete_book_and_catches_broken_notation(project):
     report = audit(store)
     assert report["ok"] and report["extraction"]["ok"] and report["assembly"]["ok"]
     assert report["complete"] == (report["segments"]["unfinished_count"] == 0)
-    seg = next(s for s in store.segments() if s.current is not None and any(ch.isdigit() for ch in s.source))
-    prot = __import__("app.translation.guard", fromlist=["protect"]).protect(seg.source, store.style)
+    protect = __import__("app.translation.guard", fromlist=["protect"]).protect
+    seg = next(s for s in store.segments() if s.current is not None and protect(s.source, store.style).slots)
+    prot = protect(seg.source, store.style)
     slot = max(prot.slots.values(), key=len)
     with store._db() as db:  # corrompe uma tradução por fora (o que a proteção nunca deixaria acontecer)
         db.execute("UPDATE translation SET text=? WHERE segment_id=? AND version=?",

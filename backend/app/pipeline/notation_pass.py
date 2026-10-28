@@ -455,12 +455,36 @@ def collect(doc: pymupdf.Document, pages: range | None = None, ocr_cache=None, o
                         diagram.white_to_move, diagram.exercise = white, exercise
                     elif "-" in text and text.replace("-", "").isdigit():
                         diagram.label = text
+    _running_heads(result.regions)
     texts = [r.resolved.text for r in result.regions if r.role == "text"]
     result.style, result.evidence = detect_style(texts)
     report = detect_convention(texts)
     result.convention = report.convention
     result.evidence |= {f"convention:{k}": v for k, v in report.evidence.items()}
     return result
+
+
+def _running_heads(regions: list[Region]) -> None:
+    """Cabeçalho e rodapé de página só se repetem: o título corrente ("Chapter 1 — Candidate Moves"),
+    com ou sem o número da página, aparece em várias páginas; o número sozinho também conta.
+
+    A faixa de cima ou de baixo da página não basta: num livro de margem estreita, a primeira
+    linha do texto ("1. Golod — Gerzhoy, Philadelphia 2011") cai nela e sumia da tradução.
+    """
+    import re
+    from collections import Counter
+
+    def key(r: Region) -> str:
+        return re.sub(r"\s+", " ", re.sub(r"\d+", "#", r.resolved.text.lower())).strip()
+
+    marked = [r for r in regions if r.role in ("header", "footer")]
+    pages = Counter()
+    for k in {(key(r), r.page) for r in marked}:
+        pages[k[0]] += 1
+    for r in marked:
+        k = key(r)
+        if not (pages[k] >= 3 or re.fullmatch(r"[#\s.,–—-]*", k)):
+            r.role = "text"
 
 
 def _following_diagram(events: list[tuple[tuple, str, object]], pos: int, key: tuple, style: LexStyle) -> str | None:

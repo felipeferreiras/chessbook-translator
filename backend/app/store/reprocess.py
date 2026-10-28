@@ -23,7 +23,8 @@ from app.extraction.ocr import WHITE_FIGURINES
 from .project_store import ProjectStore, StoreError, _now
 
 BACKEND = Path(__file__).resolve().parents[2]
-KINDS = {"sync": "sincronizar com a versão atual", "figurines": "reler com as figurinas confirmadas"}
+KINDS = {"sync": "sincronizar com a versão atual", "figurines": "reler com as figurinas confirmadas",
+         "symbols": "reescrever os lances com os símbolos confirmados"}
 _procs: dict[str, subprocess.Popen] = {}
 
 
@@ -58,6 +59,15 @@ def start(store: ProjectStore, kind: str, author: str, labels: dict[str, str] | 
         bad = {k: v for k, v in labels.items() if v and v not in WHITE_FIGURINES}
         if bad or not all(str(k).isdigit() for k in labels):
             raise StoreError(f"figurina inválida: {bad or labels}")
+        cmd += ["--labels", json.dumps(labels, ensure_ascii=False)]
+    if kind == "symbols":
+        from app.extraction.symbols import VALID_LABEL
+
+        if not labels:
+            raise StoreError("nenhum símbolo informado")
+        bad = {k: v for k, v in labels.items() if not VALID_LABEL.match(v) or len(v) > 4}
+        if bad or not all(str(k).isdigit() for k in labels):
+            raise StoreError(f"símbolo inválido: {bad or labels}")
         cmd += ["--labels", json.dumps(labels, ensure_ascii=False)]
     log = open(log_path, "w", encoding="utf-8")  # noqa: SIM115 - fechado pelo observador
     proc = subprocess.Popen(cmd, cwd=BACKEND, stdout=log, stderr=subprocess.STDOUT,
@@ -114,3 +124,18 @@ def figurines(store: ProjectStore) -> dict:
                 "reason": "OCR feito por uma versão anterior: sincronize com a versão atual primeiro"}
     return {"available": True, "reason": "", "labels": stored.get("labels") or {},
             "groups": [{k: v for k, v in g.items() if k != "vec"} for g in groups]}
+
+
+def symbols_info(store: ProjectStore) -> dict:
+    """Os desenhos depois das casas dos lances, agrupados, com o símbolo sugerido e o confirmado."""
+    path = store.dir / "ocr.json"
+    if not path.exists():
+        return {"available": False, "reason": "o livro não foi lido por OCR", "groups": [], "labels": {}}
+    stored = json.loads(path.read_text(encoding="utf-8"))
+    groups = stored.get("symbol_groups")
+    if groups is None:
+        return {"available": False, "groups": [], "labels": {},
+                "reason": "OCR feito por uma versão anterior: sincronize com a versão atual primeiro"}
+    keep = ("id", "count", "auto", "score", "margin", "read", "image")
+    return {"available": True, "reason": "", "labels": stored.get("symbol_labels") or {},
+            "groups": [{k: g[k] for k in keep} for g in sorted(groups, key=lambda g: -g["count"])]}

@@ -139,7 +139,8 @@ def assemble(pdf: Path, result: dict, out: Path, pages: list[int] | None = None,
         for p in chunk:
             for b in by_page.get(p, []):
                 s = by_id[b.id]
-                h.update(json.dumps([b.id, s["status"], s["text"], s["raw_translation"]], ensure_ascii=False).encode())
+                h.update(json.dumps([b.id, s["status"], s["text"], s["raw_translation"], s.get("source_text")],
+                                    ensure_ascii=False).encode())
         return h.hexdigest()[:24]
 
     status_count: Counter[str] = Counter()
@@ -156,7 +157,11 @@ def assemble(pdf: Path, result: dict, out: Path, pages: list[int] | None = None,
             if seg["status"] not in ACCEPTED or not seg["raw_translation"]:
                 keep.append(pymupdf.Rect(region.layout.text_rect))
                 continue
-            prot = protect(region.resolved.text, notation.style, region.main_mask, region.italic_mask)
+            # original corrigido pelo usuário (OCR): a tradução foi feita sobre ele, sem negrito conhecido
+            source = seg.get("source_text", region.resolved.text)
+            main = region.main_mask if source == region.resolved.text else [False] * len(source)
+            italic_mask = region.italic_mask if source == region.resolved.text else [False] * len(source)
+            prot = protect(source, notation.style, main, italic_mask)
             restored = restore(seg["raw_translation"], prot)
             if restored.text != seg["text"]:
                 raise ValueError(f"{b.id}: restauração diverge do resultado salvo")
@@ -165,7 +170,7 @@ def assemble(pdf: Path, result: dict, out: Path, pages: list[int] | None = None,
                 # Linha principal em negrito, variantes não: o trecho volta byte a
                 # byte, então o negrito é copiado caractere a caractere do original.
                 a, _ = prot.slot_ranges[key]
-                bold.extend(_runs(region.main_mask[a:a + end - start], start))
+                bold.extend(_runs(main[a:a + end - start], start))
             italic = [(x, y) for x, y, tag in restored.styles if tag == "i"]
             slots[b.id] = list(prot.slots.values())
             jobs.append(BlockJob(b.id, region.layout, region.column, restored.text, sorted(bold),

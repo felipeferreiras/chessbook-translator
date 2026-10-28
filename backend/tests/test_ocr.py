@@ -167,6 +167,14 @@ def test_scanned_book_goes_through_extraction_review_and_assembly(tmp_path, monk
     _run(store, 1, store.sources({1}), ENGINES[0], PseudoProvider(), Prices({}, "teste"))
     store.approve(seg.id, "revisor")
     assert not store.segment(seg.id).needs_attention  # conferido com a imagem e aprovado
+    # o original corrigido à mão é o que se traduz e se monta
+    other = next(s for s in store.segments() if s.id != seg.id and s.current is not None)
+    store.edit_source(other.id, other.source + " Corrected.", "revisor")
+    with store._db() as db:
+        db.execute("INSERT INTO job (engine, model, pages, state, budget, author, created_at)"
+                   " VALUES ('pseudo','pseudo','1','queued',1,'t','t')")
+    _run(store, 2, store.sources({1}), ENGINES[0], PseudoProvider(), Prices({}, "teste"))
+    assert "Corrected" in store.segment(other.id).current.text
     summary = asm.assemble(store.original_path, store.export_result(), store.dir / "output", ocr_cache=cache)
     assert summary["blocks_placed"] == summary["blocks"] > 0
     assert summary["leftover_original"] == [] and summary["diagrams_changed"] == []
@@ -226,7 +234,8 @@ def test_user_confirmed_figurine_is_read_in_the_whole_book(tmp_path):
 
 @pytest.mark.parametrize("read, fixed", [
     ("23.♖el", "23.♖e1"), ("16.♖fd]", "16.♖fd1"), ("27...♕xf4t", "27...♕xf4†"), ("4l.fxg5t", "41.fxg5†"),
-    ("24.♕xe4t!", "24.♕xe4†!"), ("31.e4t", "31.e4†"), ("♖dlt", "♖d1†"), ("c6t", "c6†"), ("exf4t.", "exf4†."),
+    ("31...♔d52!", "31...♔d5?!"), ("27.♖h5!2", "27.♖h5!?"), ("(30.h4!2)", "(30.h4!?)"), ("33.♖ef12?", "33.♖ef1??"),
+    ("37.f42!", "37.f4?!"), ("24.♕xe4t!", "24.♕xe4†!"), ("31.e4t", "31.e4†"), ("♖dlt", "♖d1†"), ("c6t", "c6†"), ("exf4t.", "exf4†."),
     # prosa e lances já certos ficam como estão
     ("et", "et"), ("al", "al"), ("at", "at"), ("a1", "a1"), ("Bel", "Bel"), ("8.♖e1+", "8.♖e1+"), ("48.gxh4", "48.gxh4"),
 ])
@@ -307,3 +316,40 @@ def test_block_across_a_board_is_split_and_exercise_number_is_a_mark():
     assert words == [["Macieja", "Stockholm"], ["White", "to", "play"]]
     board_px = pymupdf.Rect(*(v * 300 / 72 for v in board))
     assert not any(pymupdf.Rect(*b.bbox).intersects(board_px) for b in blocks)
+
+
+@needs_tesseract
+def test_symbols_after_moves_are_read_by_their_drawing(tmp_path):
+    """†, ±, ?! e !? decididos pelo desenho (o Tesseract lê "+" nos dois primeiros); o ⩲, sem sugestão,
+    fica com aviso até a confirmação, que reescreve os lances sem refazer o OCR e vale num OCR futuro."""
+    import json
+
+    doc = pymupdf.open()
+    page = doc.new_page(width=420, height=300)
+    page.insert_font(fontname="fs", fontfile="/usr/share/fonts/truetype/freefont/FreeSerif.ttf")
+    for i, t in enumerate(["After 1.e4† 2.d4† 3.c4† the game is level.", "But 4.b4± 5.a4± 6.h4± gives White the edge.",
+                           "And 7.g4⩲ 8.f4⩲ 9.e5⩲ is less clear; 10.d5?! 11.c5?! 12.b5!? too."]):
+        page.insert_text((20, 60 + i * 30), t, fontsize=12, fontname="fs")
+    pdf = tmp_path / "s.pdf"
+    rasterize(page, 300, 2, np.random.default_rng(1)).save(pdf)
+    cache = tmp_path / "ocr.json"
+    text = " ".join(r.resolved.text for r in collect(pymupdf.open(pdf), ocr_cache=cache, ocr_mode="on").regions)
+    for move in ("1.e4†", "3.c4†", "4.b4±", "6.h4±", "10.d5?!", "12.b5!?"):
+        assert move in text
+    stored = json.loads(cache.read_text())
+    plus_eq = next(g for g in stored["symbol_groups"] if not g["auto"])
+    warnings = [w for p in stored["pages"].values() for b in p["blocks"] for w in b["ocr_warnings"]]
+    assert any(w.startswith("ocr_simbolo_incerto: '8.f4") for w in warnings)
+
+    with pytest.raises(ValueError):
+        ocr.relabel_symbols(cache, {str(plus_eq["id"]): "x"})
+    ocr.relabel_symbols(cache, {str(plus_eq["id"]): "⩲"})
+    text = " ".join(r.resolved.text for r in collect(pymupdf.open(pdf), ocr_cache=cache, ocr_mode="on").regions)
+    assert "8.f4⩲" in text and "9.e5⩲" in text and "1.e4†" in text
+    stored = json.loads(cache.read_text())
+    assert not any(w.startswith("ocr_simbolo_incerto") for p in stored["pages"].values()
+                   for b in p["blocks"] for w in b["ocr_warnings"])
+    # OCR refeito (programa atualizado): a decisão vem pelo desenho
+    cache.write_text(json.dumps({**stored, "version": "antiga"}))
+    text = " ".join(r.resolved.text for r in collect(pymupdf.open(pdf), ocr_cache=cache, ocr_mode="on").regions)
+    assert "9.e5⩲" in text

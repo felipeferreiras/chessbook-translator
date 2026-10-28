@@ -249,10 +249,12 @@ function SegmentCard(props: { projectId: string; segment: Segment; author: strin
   const [message, setMessage] = useState("");
   const [history, setHistory] = useState<Version[] | null>(null);
   const [busy, setBusy] = useState(false);
+  const [sourceText, setSourceText] = useState<string | null>(null);  // corrigindo o original
   const dirty = text !== (s.current?.text ?? "");
+  const canFixSource = s.source_flags.length > 0 || s.status === "blocked";
   const needAuthor = !props.author.trim();
 
-  const run = async (action: () => Promise<Segment>, done: string) => {
+  const run = async (action: () => Promise<Segment>, done: string): Promise<boolean> => {
     setBusy(true);
     setProblems([]);
     setMessage("");
@@ -262,11 +264,13 @@ function SegmentCard(props: { projectId: string; segment: Segment; author: strin
       props.onSaved(updated);
       setMessage(done);
       if (history) setHistory(await api.history(projectId, s.id));
+      return true;
     } catch (e) {
       if (e instanceof ApiError) {
         setMessage(e.message);
         setProblems(e.problems);
       } else setMessage(String(e));
+      return false;
     } finally {
       setBusy(false);
     }
@@ -281,9 +285,30 @@ function SegmentCard(props: { projectId: string; segment: Segment; author: strin
         {s.current && <span className="chip">{KIND[s.current.kind] ?? s.current.kind}</span>}
         {!s.current && <span className="chip bad">{STATUS[s.status] ?? s.status}</span>}
         {s.approved && <span className="chip ok">aprovado</span>}
+        {s.source_extracted !== null && <span className="chip">original corrigido</span>}
       </header>
       <div className="columns">
-        <div className="source" lang="en">{s.source}</div>
+        {sourceText === null ? (
+          <div className="source" lang="en">{s.source}</div>
+        ) : (
+          <div>
+            <textarea lang="en" value={sourceText} onChange={(e) => setSourceText(e.target.value)} disabled={busy}
+                      rows={Math.min(14, Math.max(3, Math.ceil(sourceText.length / 70)))}
+                      aria-label={`Original de ${s.id}`} />
+            <div className="row">
+              <button disabled={busy || needAuthor || !sourceText.trim() || sourceText === s.source}
+                      onClick={() => run(() => api.editSource(projectId, s.id, sourceText, props.author),
+                                         "Original corrigido. Traduza de novo (Traduzir → pendentes).")
+                        .then((ok) => ok && setSourceText(null))}>
+                Salvar original
+              </button>
+              {s.source_extracted !== null && (
+                <button disabled={busy} onClick={() => setSourceText(s.source_extracted)}>Voltar ao texto lido</button>
+              )}
+              <button disabled={busy} onClick={() => setSourceText(null)}>Cancelar</button>
+            </div>
+          </div>
+        )}
         <div>
           <textarea lang="pt-BR" value={text} onChange={(e) => setText(e.target.value)} disabled={!s.current || busy}
                     rows={Math.min(14, Math.max(3, Math.ceil(text.length / 70)))}
@@ -297,6 +322,12 @@ function SegmentCard(props: { projectId: string; segment: Segment; author: strin
             {s.source_flags.length > 1 && ` (${s.source_flags.length - 1} trechos duvidosos)`}
           </summary>
           <ul>{s.source_flags.slice(1).map((f) => <li key={f}>{f}</li>)}</ul>
+        </details>
+      )}
+      {s.source_extracted !== null && (
+        <details className="source-flags">
+          <summary>Texto como foi lido da imagem</summary>
+          <p lang="en">{s.source_extracted}</p>
         </details>
       )}
       {s.machine_problems.length > 0 && (
@@ -319,6 +350,12 @@ function SegmentCard(props: { projectId: string; segment: Segment; author: strin
           {s.approved ? "Retirar aprovação" : s.kept_as_image ? "Manter como na imagem" : "Aprovar"}
         </button>
         {dirty && <button onClick={() => setText(s.current?.text ?? "")}>Descartar</button>}
+        {canFixSource && sourceText === null && (
+          <button onClick={() => setSourceText(s.source)}
+                  title="Corrigir o texto lido da imagem (lances, números, palavras) antes de traduzir">
+            Corrigir original
+          </button>
+        )}
         <button onClick={async () => setHistory(history ? null : await api.history(projectId, s.id))}>
           {history ? "Ocultar histórico" : "Histórico"}
         </button>

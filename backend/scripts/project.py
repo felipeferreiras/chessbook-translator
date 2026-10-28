@@ -8,6 +8,7 @@ Uso (a partir de backend/):
     .venv/bin/python -m scripts.project status ID
     .venv/bin/python -m scripts.project sync ID                      # depois de atualizar o código
     .venv/bin/python -m scripts.project figurines ID [--labels '{"3": "♕"}']  # figurinas do livro (OCR)
+    .venv/bin/python -m scripts.project symbols ID [--labels '{"7": "?"}']    # símbolos do livro (OCR)
     .venv/bin/python -m scripts.project audit ID                     # integridade do livro inteiro
     .venv/bin/python -m scripts.project backup ID [--dest PASTA]     # .zip com manifesto e sha256
     .venv/bin/python -m scripts.project restore ARQUIVO.zip [--como NOVO_ID]
@@ -101,7 +102,10 @@ def main() -> None:
     f = sub.add_parser("figurines", help="figurinas achadas pelo OCR; com --labels, relê o livro com elas")
     f.add_argument("id")
     f.add_argument("--labels", help='JSON {grupo: figurina}; "" = não é peça. Grupos omitidos: a sugestão')
-    for q in (y, f):
+    sy = sub.add_parser("symbols", help="símbolos depois dos lances (†, ±, ?!…); com --labels, reescreve os lances")
+    sy.add_argument("id")
+    sy.add_argument("--labels", help='JSON {grupo: símbolo}; "" = não é símbolo')
+    for q in (y, f, sy):
         q.add_argument("--progress", type=Path, help="andamento em JSON (usado pela interface)")
         q.add_argument("--result", type=Path, help="resultado em JSON (usado pela interface)")
         q.add_argument("--author", default=os.environ.get("USER", "linha de comando"))
@@ -166,8 +170,24 @@ def main() -> None:
             raise SystemExit(f"montagem {done.state}: {done.error} (ver {store.dir / 'output' / 'montagem.log'})")
         print(json.dumps(done.summary, ensure_ascii=False))
         print(f"PDF traduzido em {store.dir / 'output' / 'traduzido.pdf'}")
-    elif args.cmd in ("sync", "figurines"):
+    elif args.cmd in ("sync", "figurines", "symbols"):
         progress = progress_writer(args.progress)
+        reread = {}
+        if args.cmd == "symbols":
+            from app.extraction.ocr import relabel_symbols
+            from app.store.reprocess import symbols_info
+
+            if args.labels is None:
+                info = symbols_info(store)
+                if not info["available"]:
+                    raise SystemExit(info["reason"])
+                for g in info["groups"]:
+                    label = info["labels"].get(str(g["id"]))
+                    print(f"grupo {g['id']:>4}: {g['count']:>5} · OCR leu {' '.join(g['read']) or '?'} · "
+                          f"sugestão {g['auto'] or '-'}" + (f" · confirmado {label!r}" if label is not None else ""))
+                return
+            reread = relabel_symbols(store.dir / "ocr.json", json.loads(args.labels))
+            print(f"lances reescritos: {reread}")
         if args.cmd == "figurines":
             from app.store.reprocess import figurines
 
@@ -188,8 +208,7 @@ def main() -> None:
                                            progress=progress)
             print(f"\nrelido: {reread}")
         out = sync_project(store, args.author, progress)
-        if args.cmd == "figurines":
-            out = {**out, **{f"ocr_{k}": v for k, v in reread.items()}}
+        out = {**out, **{f"ocr_{k}": v for k, v in reread.items()}}
         print("\n" + json.dumps(out, ensure_ascii=False))
         if args.result:
             args.result.write_text(json.dumps(out, ensure_ascii=False), encoding="utf-8")

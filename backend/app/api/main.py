@@ -242,6 +242,25 @@ class FigurinesIn(BaseModel):
     author: str = Field(min_length=1, max_length=80)
 
 
+@app.get("/api/projects/{project_id}/symbols")
+def symbols(project_id: str) -> dict:
+    """Desenhos depois das casas dos lances (xeque, avaliação, anotação, promoção), agrupados."""
+    return reprocess.symbols_info(_store(project_id))
+
+
+@app.put("/api/projects/{project_id}/symbols")
+def set_symbols(project_id: str, body: FigurinesIn) -> dict:
+    """Grava os símbolos confirmados e reescreve o fim dos lances (sem refazer o OCR), depois sincroniza."""
+    store = _store(project_id)
+    info = reprocess.symbols_info(store)
+    if not info["available"]:
+        raise HTTPException(409, info["reason"])
+    try:
+        return reprocess.start(store, "symbols", body.author, body.labels)
+    except StoreError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
 @app.get("/api/projects/{project_id}/figurines")
 def figurines(project_id: str) -> dict:
     """Desenhos de peça achados pelo OCR, agrupados: o usuário confirma qual figurina é cada grupo."""
@@ -301,6 +320,16 @@ def revert(project_id: str, segment_id: str, body: RevertIn) -> dict:
     except StoreError as exc:
         raise HTTPException(404, str(exc)) from exc
     return _view(store.segment(segment_id))
+
+
+@app.put("/api/projects/{project_id}/segments/{segment_id}/source")
+def edit_source(project_id: str, segment_id: str, body: EditIn) -> dict:
+    """Corrige o original lido por OCR antes de traduzir (o texto lido fica guardado)."""
+    store = _store(project_id)
+    try:
+        return _view(store.edit_source(_segment_id(segment_id), body.text, body.author))
+    except StoreError as exc:
+        raise HTTPException(409, str(exc)) from exc
 
 
 @app.post("/api/projects/{project_id}/segments/{segment_id}/approve")

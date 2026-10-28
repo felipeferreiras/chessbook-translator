@@ -51,7 +51,7 @@ def audit(store: ProjectStore, check_extraction: bool = True) -> dict:
         doc = pymupdf.open(store.original_path)
         segs = book_segments(collect(doc, ocr_cache=ocr_cache, ocr_mode="on" if ocr_cache.exists() else "off"),
                              doc.metadata.get("title", "") or store.info["name"])
-        current = {s.id: s.source for s in store.segments()}
+        current = {s.id: s.source_extracted if s.source_extracted is not None else s.source for s in store.segments()}
         fresh = {b.id: b.region.resolved.text for b in segs}
         report["extraction"] = {
             "segments_project": len(current), "segments_extraction": len(fresh),

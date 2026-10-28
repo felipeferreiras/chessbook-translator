@@ -24,10 +24,11 @@ export interface Segment {
   source_flags: string[];
   needs_attention: boolean;
   kept_as_image: boolean;
+  source_extracted: string | null;
 }
 
 export interface Reprocess {
-  kind?: "sync" | "figurines";
+  kind?: "sync" | "figurines" | "symbols";
   state: "none" | "running" | "done" | "failed" | "interrupted";
   progress?: { stage: string; done: number; total: number };
   result?: Record<string, number> | null;
@@ -38,9 +39,10 @@ export interface FigurineGroup {
   id: number;
   count: number;
   auto: string;
-  score: number;
-  margin: number;
-  ocr: string[];
+  score?: number;
+  margin?: number;
+  ocr?: string[];
+  read?: string[];
   image: string;
 }
 
@@ -274,6 +276,9 @@ export const api = {
     call<Reprocess>(`${p(id)}/sync`, { method: "POST", body: JSON.stringify({ author }) }),
   reprocess: (id: string) => call<Reprocess>(`${p(id)}/reprocess`),
   figurines: (id: string) => call<FigurineInfo>(`${p(id)}/figurines`),
+  symbols: (id: string) => call<FigurineInfo>(`${p(id)}/symbols`),
+  setSymbols: (id: string, labels: Record<string, string>, author: string) =>
+    call<Reprocess>(`${p(id)}/symbols`, { method: "PUT", body: JSON.stringify({ labels, author }) }),
   setFigurines: (id: string, labels: Record<string, string>, author: string) =>
     call<Reprocess>(`${p(id)}/figurines`, { method: "PUT", body: JSON.stringify({ labels, author }) }),
   backupUrl: (id: string) => `/api${p(id)}/backup`,
@@ -286,6 +291,8 @@ export const api = {
     call<Segment>(`${p(id)}/segments/${seg}`, { method: "PUT", body: JSON.stringify({ text, author }) }),
   revert: (id: string, seg: string, version: number, author: string) =>
     call<Segment>(`${p(id)}/segments/${seg}/revert`, { method: "POST", body: JSON.stringify({ version, author }) }),
+  editSource: (id: string, seg: string, text: string, author: string) =>
+    call<Segment>(`${p(id)}/segments/${seg}/source`, { method: "PUT", body: JSON.stringify({ text, author }) }),
   approve: (id: string, seg: string, approved: boolean, author: string) =>
     call<Segment>(`${p(id)}/segments/${seg}/approve`, {
       method: "POST",

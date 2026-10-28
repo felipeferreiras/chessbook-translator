@@ -92,6 +92,7 @@ _MIGRATIONS = (
     ("job", "runner", "TEXT"),
     ("job", "heartbeat_at", "TEXT"),
     ("job", "resumed_from", "INTEGER"),
+    ("segment", "source_extracted", "TEXT"),  # o texto como foi lido, quando o usuário corrigiu o original
 )
 
 # O que retraduzir (``select_sources``). Uma versão humana nunca entra: a tradução nova não a substituiria.
@@ -165,6 +166,7 @@ class SegmentView:
     current: Version | None
     machine_problems: list[str]
     source_flags: list[str] = field(default_factory=list)  # dúvidas sobre o texto de origem (OCR)
+    source_extracted: str | None = None  # o texto lido, se o original foi corrigido pelo usuário
 
     @property
     def kept_as_image(self) -> bool:
@@ -294,13 +296,16 @@ class ProjectStore:
             old = {r["id"]: r for r in db.execute(
                 "SELECT s.*, (SELECT COUNT(*) FROM translation t WHERE t.segment_id = s.id) AS versions"
                 " FROM segment s WHERE s.status != 'obsolete'")}
+            def read(r: sqlite3.Row) -> str:  # o texto como foi lido (o corrigido pelo usuário fica por cima)
+                return r["source_extracted"] if r["source_extracted"] is not None else r["source"]
+
             by_source: dict[str, list[str]] = {}
             for oid, r in old.items():
-                by_source.setdefault(r["source"], []).append(oid)
+                by_source.setdefault(read(r), []).append(oid)
             match: dict[str, str] = {}
             used: set[str] = set()
             for seg in segments:  # 1º mesmo id e texto
-                if seg["id"] in old and old[seg["id"]]["source"] == seg["source"]:
+                if seg["id"] in old and read(old[seg["id"]]) == seg["source"]:
                     match[seg["id"]] = seg["id"]
                     used.add(seg["id"])
             for seg in segments:  # 2º mesmo texto, preferindo a mesma página
@@ -345,6 +350,12 @@ class ProjectStore:
                     report["added"] += 1
                     continue
                 prev = old[match[seg["id"]]]
+                if prev["source_extracted"] is not None:  # original corrigido pelo usuário: só a posição muda
+                    db.execute("UPDATE segment SET page=?, ordinal=?, section=?, source_flags_json=? WHERE id=?",
+                               (seg["page"], ordinal, seg.get("section", ""), json.dumps(list(seg.get("flags", []))),
+                                seg["id"]))
+                    report["kept"] += 1
+                    continue
                 db.execute("UPDATE segment SET page=?, ordinal=?, section=?, bold_json=?, italic_json=?, kind=?,"
                            " source_flags_json=? WHERE id=?", (*fields, seg["id"]))
                 old_masked = protect(prev["source"], style, json.loads(prev["bold_json"]),
@@ -441,7 +452,7 @@ class ProjectStore:
                               v["created_at"], v["provider"], v["model"])
         return SegmentView(row["id"], row["page"], row["ordinal"], row["section"], row["source"], row["status"],
                            bool(row["approved"]), current, json.loads(row["machine_problems_json"]),
-                           json.loads(row["source_flags_json"]))
+                           json.loads(row["source_flags_json"]), row["source_extracted"])
 
     def segments(self, page: int | None = None) -> list[SegmentView]:
         with self._db() as db:
@@ -590,6 +601,47 @@ class ProjectStore:
             self._log(db, "segment", segment_id, "edit", old.text if old else None, text, author)
         return self.history(segment_id)[version - 1]
 
+    def edit_source(self, segment_id: str, text: str, author: str) -> SegmentView:
+        """Corrige o texto de origem lido por OCR (ou de um bloco com lances desenhados) antes de traduzir.
+
+        O texto lido fica guardado (``source_extracted``) e a sincronização casa
+        por ele, então a correção sobrevive a uma atualização do programa. Uma
+        tradução automática feita sobre o texto antigo volta a pendente (fica no
+        histórico); uma revisão humana fica, mas pede conferência.
+        """
+        text = text.strip()
+        if not text:
+            raise StoreError("o original não pode ficar vazio")
+        with self._db() as db:
+            row = db.execute("SELECT * FROM segment WHERE id=?", (segment_id,)).fetchone()
+            if row is None:
+                raise StoreError(f"segmento inexistente: {segment_id}")
+            flags = json.loads(row["source_flags_json"])
+            if OCR_FLAG not in flags and row["status"] != "blocked":
+                raise StoreError("só o texto lido por OCR (ou um bloco bloqueado) pode ser corrigido")
+            if text == row["source"]:
+                return self._view(db, row)
+            extracted = row["source_extracted"] if row["source_extracted"] is not None else row["source"]
+            zeros = json.dumps([False] * len(text))
+            masked = protect(text, self.style, [False] * len(text), [False] * len(text)).masked
+            status = "pending" if _needs_translation(masked) and row["kind"] != "label" else "not_needed"
+            problems: list[str] = []
+            version = row["current_version"]
+            if version:
+                kind = db.execute("SELECT kind FROM translation WHERE segment_id=? AND version=?",
+                                  (segment_id, version)).fetchone()["kind"]
+                if kind == "machine":
+                    version = None
+                else:
+                    status = "needs_review"
+                    problems = ["o original foi corrigido depois desta revisão: confira lances e números com ele"]
+            db.execute("UPDATE segment SET source=?, source_extracted=?, bold_json=?, italic_json=?, status=?,"
+                       " current_version=?, approved=0, machine_problems_json=? WHERE id=?",
+                       (text, None if text == extracted else extracted, zeros, zeros, status, version,
+                        json.dumps(problems), segment_id))
+            self._log(db, "segment", segment_id, "source_edit", row["source"], text, author)
+            return self._view(db, db.execute("SELECT * FROM segment WHERE id=?", (segment_id,)).fetchone())
+
     def revert(self, segment_id: str, version: int, author: str) -> Version:
         """Volta a uma versão anterior criando uma nova (o histórico não perde nada)."""
         target = next((v for v in self.history(segment_id) if v.version == version), None)
@@ -666,8 +718,11 @@ class ProjectStore:
                     status, text = ("translated" if v["kind"] == "machine" else "reviewed"), v["text"]
                 else:  # sem tradução: só notação (copiada) ou pendente (o original fica na página)
                     status, text = row["status"], row["source"] if row["status"] == "not_needed" else None
+                corrected = row["source_extracted"] is not None
                 segments.append({
-                    "id": row["id"], "page": row["page"], "section": row["section"], "source": row["source"],
+                    "id": row["id"], "page": row["page"], "section": row["section"],
+                    "source": row["source_extracted"] if corrected else row["source"],
+                    **({"source_text": row["source"]} if corrected else {}),
                     "status": status, "text": text,
                     "raw_translation": v["masked"] if v else None,
                     "warnings": json.loads(v["warnings_json"]) if v else [],

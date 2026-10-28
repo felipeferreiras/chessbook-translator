@@ -634,6 +634,8 @@ class OcrPage:
     pieces_uncertain: int
     second_pass: bool = False  # figurinas trocadas por letras e OCR de novo
     move_confidence: dict[int, float] = field(default_factory=dict)  # posição da palavra → menor confiança da casa
+    suffixes: list = field(default_factory=list)  # ``symbols.Suffix``: o fim de cada lance, desenho por desenho
+    glyphs: list = field(default_factory=list)  # ``symbols.Glyph``
 
 
 _REST_RE = re.compile(r"^[a-h]?[1-8]?[x:×]?[a-h][1-8]")
@@ -643,6 +645,10 @@ _PIECE_MOVE_RE = re.compile(r"^(?:\(?\d{1,3}\.{0,3}|\(?\.\.\.)?[♔♕♖♗♘K
 _FIX_ONE_RE = re.compile(r"^((?:\(?\d{1,3}\.{1,3}|\.\.\.)?[♔♕♖♗♘][a-h]?[1-8]?[x:]?[a-h])[lI|\]](?=t?[+†#!?.,;:)]*$)")
 _FIX_NUMBER_RE = re.compile(r"^(\(?\d{1,2})[lI](\d?\.{1,3})(?=\S)")
 _FIX_CHECK_RE = re.compile(r"^((?:\(?\d{1,3}\.{1,3}|\.\.\.)?[♔♕♖♗♘]?[a-h]?[1-8]?[x:]?[a-h][1-8])t(?=[!?]*[.,;:)]*$)")
+
+
+_FIX_QUESTION_RE = re.compile(r"^((?:\(?\d{1,3}\.{1,3}|\.\.\.)?[♔♕♖♗♘]?[a-h]?[1-8]?[x:]?[a-h][1-8][†+#]?)"
+                              r"((?:2[!?2]?|[!?]2))(?=[†+#]?[.,;:)]*$)")
 
 
 def fix_move_glyphs(text: str) -> tuple[str, bool]:
@@ -656,6 +662,8 @@ def fix_move_glyphs(text: str) -> tuple[str, bool]:
     if any(ch in WHITE_FIGURINES for ch in out) or re.match(r"^\(?\d{1,3}\.|^[a-h](?:x[a-h])?[1-8]t", out):
         out = _FIX_ONE_RE.sub(r"\g<1>1", out)
         out = _FIX_CHECK_RE.sub(r"\g<1>†", out)
+        # "?" lido como "2" logo depois da casa: "d52!" é "d5?!", "e5!2" é "e5!?" (não há casa com 3 caracteres)
+        out = _FIX_QUESTION_RE.sub(lambda m: m.group(1) + m.group(2).replace("2", "?"), out)
     return out, out != text
 
 
@@ -825,6 +833,10 @@ def read_page(page: pymupdf.Page, scan: PageScan, protos: list[Prototype], lang:
     warnings: dict[int, list[str]] = {}
     stats = {"words": 0, "low": 0, "pieces": 0, "uncertain": 0}
     move_conf: dict[int, float] = {}
+    from app.extraction.symbols import Suffix, word_suffix
+
+    suffixes: list[Suffix] = []
+    page_glyphs: list = []
     for bi, block in enumerate(blocks):
         lines, notes = [], []
         for li, line in enumerate(block.lines):
@@ -878,6 +890,15 @@ def read_page(page: pymupdf.Page, scan: PageScan, protos: list[Prototype], lang:
                 # a caixa da palavra dentro da linha: uma palavra mal lida que pega a linha de cima
                 # (a fileira de coordenadas do diagrama) não estica o bloco sobre ela
                 wb = (w.bbox[0], max(w.bbox[1], line.bbox[1]), w.bbox[2], min(w.bbox[3], line.bbox[3]))
+                next_x0 = line.words[wi + 1].bbox[0] if wi + 1 < len(line.words) else None
+                sfx = (word_suffix(second_gray, line, w, text, line.size_px, next_x0)
+                       if len(text) == len(w.chars) else None)
+                if sfx is not None:  # o fim do lance (xeque, avaliação, promoção) será decidido pelo desenho
+                    head, tail, read, found = sfx
+                    head = fix_move_glyphs(head)[0]
+                    suffixes.append(Suffix(len(out_blocks), len(lines), len(words), head, tail, read,
+                                           list(range(len(page_glyphs), len(page_glyphs) + len(found)))))
+                    page_glyphs.extend(found)
                 words.append((text, pymupdf.Rect(*(v / scan.scale for v in wb))))
             # x_size do Tesseract × 1,07 = corpo da fonte (medido: 9,4 pt lidos para corpo 10 no livro de amostra)
             size = max(4.0, (line.size_px or (line.bbox[3] - line.bbox[1])) / scan.scale * 1.07)
@@ -896,7 +917,7 @@ def read_page(page: pymupdf.Page, scan: PageScan, protos: list[Prototype], lang:
             warnings[len(out_blocks)] = notes
         out_blocks.append({"type": 0, "bbox": tuple(bbox), "lines": lines, "number": len(out_blocks)})
     return OcrPage(out_blocks, scan.boards, warnings, stats["words"], stats["low"], stats["pieces"],
-                   stats["uncertain"], bool(figs), move_conf)
+                   stats["uncertain"], bool(figs), move_conf, suffixes, page_glyphs)
 
 
 def version(lang: str = "eng") -> str:
@@ -906,7 +927,7 @@ def version(lang: str = "eng") -> str:
 
     h = hashlib.sha256(lang.encode())
     here = Path(__file__).resolve().parent
-    for name in ("ocr.py", "glyph_probe.py"):
+    for name in ("ocr.py", "glyph_probe.py", "symbols.py"):
         h.update((here / name).read_bytes())
     try:
         h.update(subprocess.run(["tesseract", "--version"], check=False, capture_output=True,
@@ -1008,23 +1029,74 @@ def figurines_path(cache_path):
     return cache_path.with_name(f"{cache_path.stem}-figurinas.json")
 
 
-def _save_pages(path, key: str, results: dict[int, OcrPage], groups: list[dict], labels: dict | None) -> dict:
+def symbols_path(cache_path):
+    """Símbolos confirmados pelo usuário (``ocr.json`` → ``ocr-simbolos.json``)."""
+    return cache_path.with_name(f"{cache_path.stem}-simbolos.json")
+
+
+def _save_pages(path, key: str, results: dict[int, OcrPage], groups: list[dict], labels: dict | None,
+                figurines: list[Prototype] | None = None) -> dict:
+    """Grava o ``ocr.json``: páginas, grupos de figurinas e de símbolos, com o fim de cada lance
+    reescrito pelos símbolos dos desenhos (confirmados em ``ocr-simbolos.json`` ou sugeridos)."""
     import json
 
+    from app.extraction import symbols
+
+    glyphs = [g for res in results.values() for g in res.glyphs]
+    sgroups = [symbols.group_json(g) for g in symbols.group_glyphs(glyphs, figurines)]
+    confirmed: dict[str, str] = {}
+    if path is not None and symbols_path(path).exists():
+        confirmed = symbols.inherit(sgroups, json.loads(symbols_path(path).read_text(encoding="utf-8")))
     out = {}
     for p, res in results.items():
-        blocks = [{**b, "ocr_warnings": res.warnings.get(i, [])} for i, b in enumerate(res.blocks)]
-        out[p] = {"blocks": blocks, "boards": res.boards,
+        blocks = [{**b, "ocr_warnings": list(res.warnings.get(i, []))} for i, b in enumerate(res.blocks)]
+        out[p] = {"blocks": blocks, "boards": res.boards, "suffixes": symbols.page_entries(res.suffixes, res.glyphs),
                   "stats": {"words": res.words, "low_confidence": res.low_confidence, "pieces": res.pieces,
                             "pieces_uncertain": res.pieces_uncertain, "second_pass": res.second_pass}}
+    out = json.loads(json.dumps(out))  # mesmo formato vindo do cache ou da leitura (listas no lugar de tuplas)
+    symbols.apply_to_pages(out, symbols.resolved(sgroups, confirmed))
     if path is not None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_name(path.name + ".tmp")
-        tmp.write_text(json.dumps({"version": key, "pages": out, "figurine_groups": groups, "labels": labels},
-                                  ensure_ascii=False), encoding="utf-8")
-        os.replace(tmp, path)
-    # mesmo formato vindo do cache ou da leitura (listas no lugar de tuplas; páginas como inteiros)
-    return {int(k): v for k, v in json.loads(json.dumps(out)).items()}
+        _write_cache(path, {"version": key, "pages": out, "figurine_groups": groups, "labels": labels,
+                            "symbol_groups": sgroups, "symbol_labels": confirmed})
+    return {int(k): v for k, v in out.items()}
+
+
+def _write_cache(path, data: dict) -> None:
+    import json
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def relabel_symbols(cache, labels: dict[str, str]) -> dict:
+    """Grava os símbolos confirmados (grupo → símbolo; "" = não é símbolo) e reescreve o fim dos lances,
+    sem refazer o OCR. Devolve {"moves", "uncertain"}."""
+    import json
+    from pathlib import Path
+
+    from app.extraction import symbols
+
+    path = Path(cache)
+    stored = json.loads(path.read_text(encoding="utf-8"))
+    groups = {str(g["id"]): g for g in stored.get("symbol_groups") or []}
+    for gid, label in labels.items():
+        if gid not in groups:
+            raise ValueError(f"grupo de símbolo inexistente: {gid}")
+        if not symbols.VALID_LABEL.match(label):
+            raise ValueError(f"símbolo inválido: {label!r}")
+    confirmed = {**(stored.get("symbol_labels") or {}), **labels}
+    old = json.loads(symbols_path(path).read_text(encoding="utf-8")) if symbols_path(path).exists() else []
+    chosen = [{"label": confirmed[gid], "vec": g["vec"], "height": g["height"], "top": g["top"]}
+              for gid, g in groups.items() if gid in confirmed]
+    # decisões antigas sobre desenhos que não estão mais nos grupos ficam (valem num OCR futuro)
+    kept = [c for c in old if not any(c["vec"] == n["vec"] for n in chosen)]
+    symbols_path(path).write_text(json.dumps(chosen + kept, ensure_ascii=False), encoding="utf-8")
+    result = symbols.apply_to_pages(stored["pages"], symbols.resolved(list(groups.values()), confirmed))
+    stored["symbol_labels"] = confirmed
+    _write_cache(path, stored)
+    return result
 
 
 def _save_passe1(path, scans: list[PageScan], lang: str = "eng") -> None:
@@ -1073,7 +1145,7 @@ def document_ocr(doc: pymupdf.Document, cache: object = None, lang: str = "eng",
     confirmed = None
     if path is not None and figurines_path(path).exists():
         confirmed = confirmed_prototypes(json.loads(figurines_path(path).read_text(encoding="utf-8")))
-    results, scans, groups = ocr_document_detailed(doc, pages, lang, progress=progress, confirmed=confirmed)
+    results, scans, groups, used = ocr_document_detailed(doc, pages, lang, progress=progress, confirmed=confirmed)
     _save_passe1(_passe1_path(path) if path is not None else None, scans, lang)
     labels = None
     if confirmed is not None:  # os grupos novos herdam a decisão do usuário pelo desenho
@@ -1081,7 +1153,7 @@ def document_ocr(doc: pymupdf.Document, cache: object = None, lang: str = "eng",
         for g in groups:
             char, score, _margin = match_prototype(g.vec, confirmed) if confirmed else ("", 0.0, 0.0)
             labels[str(g.id)] = char if score >= MATCH_SIMILARITY else ""
-    return _save_pages(path, version(lang), results, [group_json(g) for g in groups], labels)
+    return _save_pages(path, version(lang), results, [group_json(g) for g in groups], labels, used)
 
 
 def reread_with_figurines(doc: pymupdf.Document, cache, labels: dict[int, str], lang: str = "eng",
@@ -1132,15 +1204,16 @@ def reread_with_figurines(doc: pymupdf.Document, cache, labels: dict[int, str], 
             progress("figurinas", i + 1, len(pages))
     if not cached:
         _save_passe1(passe1, scans, lang)
-    _save_pages(path, version(lang), results, groups, {str(c["group"]): c["char"] for c in chosen})
+    _save_pages(path, version(lang), results, groups, {str(c["group"]): c["char"] for c in chosen}, protos)
     return {"pages": len(pages), "pieces": sum(r.pieces for r in results.values()),
             "uncertain": sum(r.pieces_uncertain for r in results.values())}
 
 
 def ocr_document_detailed(doc: pymupdf.Document, pages: list[int], lang: str = "eng", dpi: int = OCR_DPI,
                           progress=None, confirmed: list[Prototype] | None = None
-                          ) -> tuple[dict[int, OcrPage], list[PageScan], list[FigurineGroup]]:
-    """OCR das páginas (1-based), com as primeiras passadas e os grupos de figurinas achados."""
+                          ) -> tuple[dict[int, OcrPage], list[PageScan], list[FigurineGroup], list[Prototype]]:
+    """OCR das páginas (1-based), com as primeiras passadas, os grupos de figurinas achados e os
+    protótipos usados."""
     scans = []
     for i, p in enumerate(pages):
         scans.append(scan_page(doc[p - 1], lang, dpi))
@@ -1154,7 +1227,7 @@ def ocr_document_detailed(doc: pymupdf.Document, pages: list[int], lang: str = "
         out[s.page] = read_page(doc[s.page - 1], s, protos, lang, dpi)
         if progress:
             progress("figurinas", i + 1, len(scans))
-    return out, scans, figurine_groups(cands)
+    return out, scans, figurine_groups(cands), protos
 
 
 def ocr_document(doc: pymupdf.Document, pages: list[int], lang: str = "eng", dpi: int = OCR_DPI,

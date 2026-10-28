@@ -34,6 +34,8 @@ class BookSegment:
     def kind(self) -> str:
         if DIAGRAM_LABEL.match(self.region.resolved.text.strip()):
             return "label"
+        if self.region.role != "text":
+            return "heading"  # título corrente da página
         return "heading" if self.section.heading_level else "paragraph"
 
     @property
@@ -64,7 +66,9 @@ class BookSegment:
 
 def book_segments(notation: DocumentNotation, title: str = "", pages: set[int] | None = None) -> list[BookSegment]:
     """Segmentos de texto do livro (``notation`` do livro inteiro; ``pages`` só filtra a saída)."""
-    text = [r for r in notation.regions if r.role == "text"]
+    # o cabeçalho e o rodapé correntes também são traduzidos ("Chapter 1 — Candidate Moves");
+    # o número de página sozinho fica como está (só notação/número: não precisa de tradução)
+    text = [r for r in notation.regions if r.role in ("text", "header", "footer")]
     per_page: Counter[int] = Counter()
     out = []
     for region, section in zip(text, assign_sections(text, notation.style, title), strict=True):

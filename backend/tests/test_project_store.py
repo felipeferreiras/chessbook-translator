@@ -216,3 +216,40 @@ def test_sync_resets_translation_when_the_protected_text_changes(bare):
     assert report["retranslate"] == 1
     seg = bare.segment("p1-0")
     assert seg.current is None and seg.status == "pending" and len(bare.history("p1-0")) == 1
+
+
+def test_ocr_source_can_be_corrected_before_translation_and_survives_sync(bare):
+    """O original lido por OCR ("Wc4") é corrigido ("♕c4†") antes de traduzir; a sincronização casa
+    pelo texto lido e mantém a correção; a exportação leva os dois (montagem e tradução)."""
+    from app.pipeline.notation_pass import OCR_FLAG
+
+    read = "After 22...Wc4 Black wins."
+    bare.add_book_segments([{"id": "p1-0", "page": 1, "source": read, "flags": [OCR_FLAG]},
+                            {"id": "p1-1", "page": 1, "source": "Digital text."}])
+    with pytest.raises(StoreError):
+        bare.edit_source("p1-1", "Digital text!", "revisor")  # não é OCR
+    seg = bare.edit_source("p1-0", "After 22...♕c4† Black wins.", "revisor")
+    assert seg.source == "After 22...♕c4† Black wins." and seg.source_extracted == read and seg.status == "pending"
+    # tradução automática sobre o original corrigido; corrigir de novo a devolve a pendente
+    with bare._db() as db:
+        bare.record_machine(db, {"id": "p1-0", "status": "translated", "text": "Depois de 22...♕c4† as pretas vencem.",
+                                 "raw_translation": "Depois de ⟦1⟧ as pretas vencem."})
+    assert bare.segment("p1-0").current is not None
+    seg = bare.edit_source("p1-0", "After 22...♕c4†! Black wins.", "revisor")
+    assert seg.current is None and seg.status == "pending" and len(bare.history("p1-0")) == 1
+    # revisão humana fica, mas pede conferência
+    with bare._db() as db:
+        bare.record_machine(db, {"id": "p1-0", "status": "translated", "text": "Depois de 22...♕c4†! as pretas vencem.",
+                                 "raw_translation": "Depois de ⟦1⟧ as pretas vencem."})
+    bare.edit("p1-0", "Após 22...♕c4†! as pretas vencem.", "revisor")
+    seg = bare.edit_source("p1-0", "After 22...♕c4†!! Black wins.", "revisor")
+    assert seg.status == "needs_review" and seg.current.kind == "edit" and seg.needs_attention
+
+    report = bare.sync_segments([{"id": "p1-0", "page": 1, "source": read, "flags": [OCR_FLAG]},
+                                 {"id": "p1-1", "page": 1, "source": "Digital text."}], "teste")
+    assert report["kept"] == 2 and report["added"] == 0
+    assert bare.segment("p1-0").source == "After 22...♕c4†!! Black wins."
+    exported = next(s for s in bare.export_result()["segments"] if s["id"] == "p1-0")
+    assert exported["source"] == read and exported["source_text"] == "After 22...♕c4†!! Black wins."
+    # voltar ao texto lido desfaz a correção
+    assert bare.edit_source("p1-0", read, "revisor").source_extracted is None
